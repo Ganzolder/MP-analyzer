@@ -106,6 +106,15 @@ export default function HomePage() {
       return;
     }
     
+    // Проверка размера файлов (Vercel ограничение: 4.5 MB для Serverless Functions)
+    const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB (оставляем запас)
+    const oversizedFiles = filesToAnalyze.filter(f => f.file.size > MAX_FILE_SIZE);
+    if (oversizedFiles.length > 0) {
+      const fileNames = oversizedFiles.map(f => f.name).join(", ");
+      setUploadError(`Файл(ы) слишком большой(ие): ${fileNames}. Максимальный размер: 4 MB`);
+      return;
+    }
+    
     hapticFeedback("medium");
     setIsAnalyzing(true);
     
@@ -153,8 +162,28 @@ export default function HomePage() {
       });
       
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || "Ошибка анализа");
+        // Проверяем Content-Type перед парсингом JSON
+        const contentType = response.headers.get("content-type");
+        let errorMessage = "Ошибка анализа";
+        
+        if (contentType && contentType.includes("application/json")) {
+          try {
+            const error = await response.json();
+            errorMessage = error.message || error.error || `Ошибка ${response.status}: ${response.statusText}`;
+          } catch (e) {
+            errorMessage = `Ошибка ${response.status}: ${response.statusText}`;
+          }
+        } else {
+          // Если не JSON, читаем как текст
+          try {
+            const text = await response.text();
+            errorMessage = text || `Ошибка ${response.status}: ${response.statusText}`;
+          } catch (e) {
+            errorMessage = `Ошибка ${response.status}: ${response.statusText}`;
+          }
+        }
+        
+        throw new Error(errorMessage);
       }
       
       updateProgress(90, 4);
@@ -178,10 +207,23 @@ export default function HomePage() {
       });
     } catch (err: any) {
       console.error("Analysis error:", err);
-      failAnalysis(err.message || "Произошла ошибка при анализе файла. Попробуйте ещё раз.");
+      
+      // Улучшенные сообщения об ошибках
+      let errorMessage = err.message || "Произошла ошибка при анализе файла. Попробуйте ещё раз.";
+      
+      // Специальные сообщения для известных ошибок
+      if (errorMessage.includes("413") || errorMessage.includes("Request Entity Too Large")) {
+        errorMessage = "Файл слишком большой. Максимальный размер: 4 MB. Попробуйте загрузить файл меньшего размера.";
+      } else if (errorMessage.includes("504") || errorMessage.includes("Gateway Timeout") || errorMessage.includes("timeout")) {
+        errorMessage = "Превышено время ожидания. Файл слишком большой для обработки. Попробуйте загрузить файл меньшего размера.";
+      } else if (errorMessage.includes("500") || errorMessage.includes("Internal Server Error")) {
+        errorMessage = "Ошибка сервера. Попробуйте ещё раз через несколько секунд.";
+      }
+      
+      failAnalysis(errorMessage);
       toast({
         title: "Ошибка",
-        description: err.message || "Не удалось выполнить анализ",
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
@@ -210,8 +252,28 @@ export default function HomePage() {
       updateProgress(50, 2);
       
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || "Ошибка анализа");
+        // Проверяем Content-Type перед парсингом JSON
+        const contentType = response.headers.get("content-type");
+        let errorMessage = "Ошибка анализа";
+        
+        if (contentType && contentType.includes("application/json")) {
+          try {
+            const error = await response.json();
+            errorMessage = error.message || error.error || `Ошибка ${response.status}: ${response.statusText}`;
+          } catch (e) {
+            errorMessage = `Ошибка ${response.status}: ${response.statusText}`;
+          }
+        } else {
+          // Если не JSON, читаем как текст
+          try {
+            const text = await response.text();
+            errorMessage = text || `Ошибка ${response.status}: ${response.statusText}`;
+          } catch (e) {
+            errorMessage = `Ошибка ${response.status}: ${response.statusText}`;
+          }
+        }
+        
+        throw new Error(errorMessage);
       }
       
       updateProgress(90, 4);
@@ -233,10 +295,23 @@ export default function HomePage() {
       });
     } catch (err: any) {
       console.error("Demo analysis error:", err);
-      failAnalysis(err.message || "Ошибка демо-анализа");
+      
+      // Улучшенные сообщения об ошибках
+      let errorMessage = err.message || "Ошибка демо-анализа";
+      
+      // Специальные сообщения для известных ошибок
+      if (errorMessage.includes("413") || errorMessage.includes("Request Entity Too Large")) {
+        errorMessage = "Файл слишком большой. Максимальный размер: 4 MB.";
+      } else if (errorMessage.includes("504") || errorMessage.includes("Gateway Timeout") || errorMessage.includes("timeout")) {
+        errorMessage = "Превышено время ожидания. Попробуйте ещё раз.";
+      } else if (errorMessage.includes("500") || errorMessage.includes("Internal Server Error")) {
+        errorMessage = "Ошибка сервера. Попробуйте ещё раз через несколько секунд.";
+      }
+      
+      failAnalysis(errorMessage);
       toast({
         title: "Ошибка",
-        description: err.message || "Не удалось выполнить демо-анализ",
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
