@@ -6,6 +6,7 @@ import { analyzeReport } from "@/lib/analysis";
 import { parseCostFile } from "@/lib/analysis/cost-parser";
 import { getChargeCategory } from "@/lib/analysis/constants";
 import { logger } from "@/lib/utils/logger";
+import { SummaryCalculator } from "@/lib/analysis/calculators/summary-calculator";
 import type { AggregatedOrder, OrderStatus } from "@/lib/analysis/types";
 
 // Путь к демо-файлу
@@ -219,20 +220,9 @@ export async function POST(request: NextRequest) {
         costReports: lastResult.costReports ? { ...lastResult.costReports } : undefined,
       };
       
-      // Суммируем метрики из всех файлов
-      analysisResult.summary.grossRevenue = allResults.reduce((sum, r) => sum + r.summary.grossRevenue, 0);
-      analysisResult.summary.revenueAmount = allResults.reduce((sum, r) => sum + r.summary.revenueAmount, 0);
-      analysisResult.summary.pointsAmount = allResults.reduce((sum, r) => sum + r.summary.pointsAmount, 0);
-      analysisResult.summary.ozonFees = allResults.reduce((sum, r) => sum + r.summary.ozonFees, 0);
-      analysisResult.summary.netPayout = allResults.reduce((sum, r) => sum + r.summary.netPayout, 0);
-      analysisResult.summary.totalOrders = allResults.reduce((sum, r) => sum + r.summary.totalOrders, 0);
-      analysisResult.summary.completedOrders = allResults.reduce((sum, r) => sum + r.summary.completedOrders, 0);
-      analysisResult.summary.returnedOrders = allResults.reduce((sum, r) => sum + r.summary.returnedOrders, 0);
-      analysisResult.summary.partialReturns = allResults.reduce((sum, r) => sum + r.summary.partialReturns, 0);
-      analysisResult.summary.cancelledOrders = allResults.reduce((sum, r) => sum + (r.summary.cancelledOrders || 0), 0);
-      analysisResult.summary.totalCost = allResults.reduce((sum, r) => sum + (r.summary.totalCost || 0), 0);
-      analysisResult.summary.totalCostSold = allResults.reduce((sum, r) => sum + (r.summary.totalCostSold || 0), 0);
-      analysisResult.summary.totalNetProfit = allResults.reduce((sum, r) => sum + (r.summary.totalNetProfit || 0), 0);
+      // ВАЖНО: НЕ суммируем summary из каждого файла напрямую!
+      // Это приведёт к двойному подсчёту, если один заказ есть в нескольких файлах.
+      // Вместо этого сначала объединяем заказы, а затем пересчитываем summary из объединённых заказов.
       
       // Объединяем заказы (по orderNumber - если заказ повторяется, суммируем суммы)
       const ordersMap = new Map();
@@ -313,6 +303,36 @@ export async function POST(request: NextRequest) {
       }
       
       analysisResult.orders = Array.from(ordersMap.values());
+      
+      // Объединяем nonOrderCharges и subscriptions из всех файлов
+      const allNonOrderCharges: any[] = [];
+      const allSubscriptions: any[] = [];
+      for (const result of allResults) {
+        if (result.nonOrderCharges && Array.isArray(result.nonOrderCharges)) {
+          allNonOrderCharges.push(...result.nonOrderCharges);
+        }
+        if (result.subscriptions && Array.isArray(result.subscriptions)) {
+          allSubscriptions.push(...result.subscriptions);
+        }
+      }
+      analysisResult.nonOrderCharges = allNonOrderCharges;
+      analysisResult.subscriptions = allSubscriptions;
+      
+      // ВАЖНО: Пересчитываем summary из объединённых заказов, а не суммируем summary из каждого файла!
+      // Это предотвращает двойной подсчёт, если один заказ есть в нескольких файлах
+      const summaryCalculator = new SummaryCalculator();
+      const recalculatedSummary = summaryCalculator.calculateSummary(
+        analysisResult.orders,
+        allNonOrderCharges,
+        allSubscriptions,
+        analysisResult.productMetrics
+      );
+      
+      // Обновляем summary пересчитанными значениями
+      analysisResult.summary = {
+        ...analysisResult.summary,
+        ...recalculatedSummary,
+      };
       
       // Объединяем товары (productMetrics - по article)
       const productsMap = new Map();
