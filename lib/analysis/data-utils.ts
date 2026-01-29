@@ -7,7 +7,10 @@
  */
 export function getString(value: any): string {
   if (value === null || value === undefined) return "";
-  return String(value).trim();
+  // ВАЖНО: обычный `.trim()` удаляет управляющие символы \x10-\x1F.
+  // А в KOI-7 они используются для заглавных букв (А-П), поэтому их нельзя срезать.
+  // Убираем только "обычные" пробельные символы.
+  return String(value).replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, "");
 }
 
 /**

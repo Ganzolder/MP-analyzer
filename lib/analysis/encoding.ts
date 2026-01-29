@@ -30,36 +30,37 @@ const ASCII_TO_CYRILLIC: Record<string, string> = {
  * только кириллица закодирована в KOI-7. Поэтому цифры, латинские буквы и знаки препинания НЕ декодируются.
  */
 
-// Знаки препинания, которые НЕ должны декодироваться
-const PUNCTUATION_TO_PRESERVE = new Set([
-  ",",  // запятая
-  ".",  // точка
-  "'",  // одинарная кавычка
-  '"',  // двойная кавычка
-  ":",  // двоеточие
-  ";",  // точка с запятой
-  "!",  // восклицательный знак
-  "?",  // вопросительный знак
-  "-",  // дефис (обрабатывается отдельно)
-  "_",  // подчеркивание
-  "/",  // слэш
-  "(",  // открывающая скобка
-  ")",  // закрывающая скобка
-  "[",  // открывающая квадратная скобка
-  "]",  // закрывающая квадратная скобка
-  "{",  // открывающая фигурная скобка
-  "}",  // закрывающая фигурная скобка
-  "=",  // знак равенства
-  "+",  // плюс
-  "*",  // звездочка
-  "&",  // амперсанд
-  "%",  // процент
-  "$",  // доллар
-  "#",  // решетка
-  "@",  // собака
-  "x",  // латинская буква x (строчная)
-  "X",  // латинская буква X (заглавная)
-]);
+// Пробелы/разделители между токенами
+const TOKEN_SEPARATORS = new Set([" ", "\n", "\t", "\r"]);
+
+const looksLikeRealNumberToken = (token: string) => {
+  // 123, 123.45, 123,45
+  if (/^\d+([.,]\d+)?$/.test(token)) return true;
+  // 87-70, 2025-01, 01-12-2025
+  if (/^\d{1,6}(-\d{1,6})+$/.test(token)) return true;
+  // короткие годы/месяцы
+  if (/^\d{2,4}$/.test(token)) return true;
+  return false;
+};
+
+const isKoi7Char = (ch: string) => {
+  // KOI-7 “алфавит”: управляющие \x10-\x1F, цифры 0-9, @, A-O, :;<=>?, Q(ё), а также !\"#$%&'()*+,-./ для заглавных Р-Ю
+  const code = ch.charCodeAt(0);
+  if (code >= 0x10 && code <= 0x1f) return true;
+  if (/[0-9@A-OQ:;<=>?!"#$%&'()*+,\-./]/.test(ch)) return true;
+  return false;
+};
+
+const decodeKoi7Token = (token: string) => {
+  // Декодируем посимвольно через таблицу, если символ известен; иначе оставляем как есть
+  let out = "";
+  for (let i = 0; i < token.length; i++) {
+    const ch = token[i];
+    const mapped = ASCII_TO_CYRILLIC[ch];
+    out += mapped !== undefined ? mapped : ch;
+  }
+  return out;
+};
 
 export function fixEncoding(str: string): string {
   if (!str || typeof str !== "string") return str;
@@ -92,78 +93,31 @@ export function fixEncoding(str: string): string {
     fixedStr = fixedStr.replace(/>72@0B 2K@CG:8/g, "Возврат выручки");
   }
   
-  let result = "";
-  // Если строка явно содержит KOI-7 маркеры (управляющие символы / типичный набор @:;<>? и т.п.),
-  // то цифры внутри "слов" — это тоже буквы (0-9 -> а-й). Но реальные числа (например "87-70", "2025")
-  // надо сохранить как числа.
-  const hasKoi7Markers =
-    /[\x10-\x1F]/.test(fixedStr) || /[@A-OG-Z:<=>?]/.test(fixedStr);
+  // Декодируем “по токенам”: если токен похож на KOI-7 слово — декодируем,
+  // если это реальное число/ID — оставляем как есть.
+  let out = "";
+  let token = "";
 
-  const isNumericTokenChar = (ch: string) => /[0-9.,-]/.test(ch);
-  const isWordBoundary = (ch: string) => ch === "" || ch === " " || ch === "\n" || ch === "\t";
-
-  const isProbablyRealNumberAt = (s: string, idx: number) => {
-    // Определяем "токен" вокруг idx (цифры/разделители)
-    let l = idx;
-    while (l > 0 && isNumericTokenChar(s[l - 1])) l--;
-    let r = idx;
-    while (r + 1 < s.length && isNumericTokenChar(s[r + 1])) r++;
-    const token = s.slice(l, r + 1);
-
-    // Если токен окружен границами слова — скорее всего это реальное число
-    const left = l > 0 ? s[l - 1] : "";
-    const right = r + 1 < s.length ? s[r + 1] : "";
-    const bounded = isWordBoundary(left) && isWordBoundary(right);
-    if (!bounded) return false;
-
-    // Типичные числовые формы
-    if (/^\d+([.,]\d+)?$/.test(token)) return true;          // 123 или 123.45
-    if (/^\d{1,6}(-\d{1,6})+$/.test(token)) return true;     // 87-70, 2025-01
-    if (/^\d{2,4}$/.test(token)) return true;                // 25, 2025
-    return false;
+  const flushToken = () => {
+    if (!token) return;
+    const hasKoi = token.split("").some(isKoi7Char) || /[\x10-\x1F]/.test(token);
+    if (hasKoi && !looksLikeRealNumberToken(token)) {
+      out += decodeKoi7Token(token);
+    } else {
+      out += token;
+    }
+    token = "";
   };
 
   for (let i = 0; i < fixedStr.length; i++) {
-    const char = fixedStr[i];
-    const prevChar = i > 0 ? fixedStr[i - 1] : " ";
-    const nextChar = i + 1 < fixedStr.length ? fixedStr[i + 1] : " ";
-    
-    // ЦИФРЫ и ЛАТИНСКИЕ БУКВЫ НЕ декодируем - они уже в правильной кодировке
-    // Но проверяем, не является ли это частью кириллического слова
-    if (/[0-9]/.test(char)) {
-      // В KOI-7 цифры 0-9 = а-й. Декодируем только если:
-      // - строка похожа на KOI-7 (есть маркеры)
-      // - и эта цифра не является частью "реального" числового токена (например "87-70")
-      if (hasKoi7Markers && !isProbablyRealNumberAt(fixedStr, i)) {
-        const decoded = ASCII_TO_CYRILLIC[char];
-        result += decoded !== undefined ? decoded : char;
-      } else {
-        result += char;
-      }
-    } else if (/[a-zA-Z]/.test(char) && char.charCodeAt(0) < 128) {
-      // Латиница - оставляем как есть
-      result += char;
-    } 
-    // ЗНАКИ ПРЕПИНАНИЯ НЕ декодируем - они уже в правильной кодировке
-    else if (PUNCTUATION_TO_PRESERVE.has(char)) {
-      result += char;
-    } 
-    else if (char === "-") {
-      // Специальная логика для "-":
-      // Если в начале слова - это "Э", иначе дефис
-      const isWordStart = prevChar === " " || prevChar === "\n" || i === 0;
-      const nextIsLatin = /[a-zA-Z]/.test(nextChar);
-      
-      if (isWordStart && !nextIsLatin) {
-        result += "Э";
-      } else {
-        result += "-";
-      }
-    } else {
-      // Декодируем символ через таблицу или оставляем как есть
-      const decoded = ASCII_TO_CYRILLIC[char];
-      result += decoded !== undefined ? decoded : char;
+    const ch = fixedStr[i];
+    if (TOKEN_SEPARATORS.has(ch)) {
+      flushToken();
+      out += ch;
+      continue;
     }
+    token += ch;
   }
-  return result;
+  flushToken();
+  return out;
 }
