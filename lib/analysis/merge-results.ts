@@ -94,11 +94,19 @@ export function mergeAnalysisResults(results: AnalysisResult[]): AnalysisResult 
   };
 
   // Объединяем все заказы
+  // ВАЖНО: Используем комбинацию orderNumber + sku/article для правильного объединения
+  // заказов с несколькими товарами из разных периодов
   const ordersMap = new Map<string, typeof merged.orders[0]>();
   const productsMap = new Map<string, typeof merged.productMetrics[0]>();
   const dailyMetricsMap = new Map<string, typeof merged.dailyMetrics[0]>();
   type ChargeTypeBreakdownGroup = NonNullable<AnalysisResult["chargeTypeBreakdown"]>[number];
   const chargeTypeBreakdownMap = new Map<string, ChargeTypeBreakdownGroup>();
+
+  // Функция для получения ключа заказа (orderNumber + sku/article)
+  const getOrderKey = (order: AggregatedOrder): string => {
+    const sku = order.sku || order.article || "";
+    return `${order.orderNumber}|${sku}`;
+  };
 
   for (const result of results) {
     // Суммируем сводку
@@ -141,9 +149,10 @@ export function mergeAnalysisResults(results: AnalysisResult[]): AnalysisResult 
     merged.problemAreas.push(...result.problemAreas);
     merged.recommendations.push(...result.recommendations);
 
-    // Объединяем заказы (по orderNumber)
+    // Объединяем заказы (по orderNumber + sku/article для правильного объединения заказов с несколькими товарами)
     for (const order of result.orders) {
-      const existing = ordersMap.get(order.orderNumber);
+      const orderKey = getOrderKey(order);
+      const existing = ordersMap.get(orderKey);
       if (existing) {
         // Если заказ уже есть, суммируем суммы и увеличиваем количество
         existing.grossRevenue += order.grossRevenue;
@@ -179,6 +188,8 @@ export function mergeAnalysisResults(results: AnalysisResult[]): AnalysisResult 
         }
         existing.commissionAmount = (existing.commissionAmount || 0) + (order.commissionAmount || 0);
         existing.logisticsAmount = (existing.logisticsAmount || 0) + (order.logisticsAmount || 0);
+        // ВАЖНО: Эквайринг суммируется с учётом знака (может быть отрицательным при возвратах)
+        // Это критично для заказов, разбитых между периодами (эквайринг в одном, возврат в другом)
         existing.acquiringAmount = (existing.acquiringAmount || 0) + (order.acquiringAmount || 0);
         existing.returnAmount = (existing.returnAmount || 0) + (order.returnAmount || 0);
         existing.otherFeesAmount = (existing.otherFeesAmount || 0) + (order.otherFeesAmount || 0);
@@ -189,6 +200,17 @@ export function mergeAnalysisResults(results: AnalysisResult[]): AnalysisResult 
         if (order.chargeTypes) {
           existing.chargeTypes = [...new Set([...existing.chargeTypes, ...order.chargeTypes])];
         }
+        // ВАЖНО: Объединяем даты - берем самую раннюю orderDate и самую позднюю chargeDate
+        // Это нужно для заказов, разбитых между периодами
+        if (order.orderDate && (!existing.orderDate || order.orderDate < existing.orderDate)) {
+          existing.orderDate = order.orderDate;
+        }
+        if (order.chargeDate && (!existing.chargeDate || order.chargeDate > existing.chargeDate)) {
+          existing.chargeDate = order.chargeDate;
+        }
+        // Обновляем статус - если в одном периоде заказ был "в работе", а в другом "завершен",
+        // то после объединения должен быть "завершен"
+        // Но статус будет пересчитан позже в recalculateOrderStatus
         // Объединяем транзакции (не у всех заказов они могут быть)
         if (Array.isArray(order.transactions)) {
           if (!Array.isArray(existing.transactions)) existing.transactions = [];
@@ -196,7 +218,7 @@ export function mergeAnalysisResults(results: AnalysisResult[]): AnalysisResult 
         }
       } else {
         // Создаём копию заказа
-        ordersMap.set(order.orderNumber, {
+        ordersMap.set(orderKey, {
           ...order,
           transactions: Array.isArray(order.transactions) ? [...order.transactions] : [],
         });
