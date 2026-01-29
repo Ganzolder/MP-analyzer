@@ -340,6 +340,14 @@ export default function HomePage() {
         });
         
         if (!response.ok) {
+          // Специальная обработка для ошибки 504 (Gateway Timeout)
+          if (response.status === 504) {
+            throw new Error(
+              `Ошибка 504: Превышено время ожидания. Файл слишком большой для обработки. ` +
+              `Попробуйте загрузить файл меньшего размера или разделите на несколько файлов.`
+            );
+          }
+          
           const contentType = response.headers.get("content-type");
           let errorMessage = "Ошибка анализа";
           
@@ -419,6 +427,14 @@ export default function HomePage() {
         });
         
         if (!response.ok) {
+          // Специальная обработка для ошибки 504 (Gateway Timeout)
+          if (response.status === 504) {
+            throw new Error(
+              `Ошибка 504: Превышено время ожидания при обработке чанка ${chunkIndex + 1}/${totalChunks}. ` +
+              `Файлы слишком большие для обработки. Попробуйте загрузить меньше файлов или уменьшите их размер.`
+            );
+          }
+          
           const contentType = response.headers.get("content-type");
           let errorMessage = `Ошибка при загрузке чанка ${chunkIndex + 1}/${totalChunks}`;
           
