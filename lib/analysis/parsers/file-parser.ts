@@ -3,12 +3,108 @@
  */
 
 import * as XLSX from "xlsx";
+import * as iconv from "iconv-lite";
 import { convertXlsxToXls } from "../converter";
 import { logger } from "@/lib/utils/logger";
 import { fixEncoding } from "../encoding";
 import { extractOrderNumber } from "../constants";
 import { getString, getNumber, parseDate } from "../data-utils";
 import type { RawRow, ChargeRow } from "../types";
+
+/**
+ * Декодирует строку из UTF-16LE (если она была неправильно прочитана)
+ * 
+ * Проблема: Excel файлы могут содержать строки в UTF-16LE, которые при чтении через XLSX
+ * интерпретируются как однобайтовая строка, что даёт результат типа "K@CG:0" вместо "Выручка"
+ * 
+ * UTF-16LE "Выручка" = байты: 12 04 4B 04 40 04 43 04 47 04 3A 04 30 04
+ * При неправильном чтении: \x12K@CG:0 (где \x12 = управляющий символ, 0x04 пропадает)
+ */
+function decodeUtf16LeString(value: any): string {
+  if (value === null || value === undefined) return "";
+  const str = String(value);
+  
+  // Если строка пустая, возвращаем как есть
+  if (!str || str.length === 0) return str;
+  
+  // Проверяем признаки UTF-16LE:
+  // 1. Управляющие символы в начале (0x10-0x1F) + латинские буквы/цифры
+  // 2. Паттерн типа "K@CG:0" (управляющий символ + латиница)
+  // 3. Символы с кодами 0x04 (часто встречаются в UTF-16LE кириллице)
+  
+  const hasUtf16LePattern = 
+    // Паттерн: управляющий символ + латиница (например, \x12K@CG:0)
+    /^[\x10-\x1F][A-Z@0-9:;<=>?]/.test(str) ||
+    // Символ 0x04 (часто в UTF-16LE)
+    /[\x04]/.test(str) ||
+    // Управляющий символ в начале + короткая строка (вероятно UTF-16LE)
+    (str.charCodeAt(0) >= 0x10 && str.charCodeAt(0) <= 0x1F && str.length > 1 && str.length < 50);
+  
+  if (!hasUtf16LePattern) {
+    // Не похоже на UTF-16LE, возвращаем как есть
+    return str;
+  }
+  
+  // Пытаемся декодировать как UTF-16LE
+  // Восстанавливаем оригинальные байты UTF-16LE
+  // Пример: "Выручка" в UTF-16LE = 12 04 4B 04 40 04 43 04 47 04 3A 04 30 04
+  // При неправильном чтении: \x12K@CG:0 (где \x12 = charCode 18, байт 0x04 пропал)
+  
+  try {
+    const bytes: number[] = [];
+    
+    for (let i = 0; i < str.length; i++) {
+      const charCode = str.charCodeAt(i);
+      
+      // Управляющие символы (0x10-0x1F) - это первый байт UTF-16LE кириллицы
+      // Второй байт (0x04) пропал при неправильном чтении
+      if (charCode >= 0x10 && charCode <= 0x1F) {
+        bytes.push(charCode);  // Первый байт (например, 0x12)
+        bytes.push(0x04);       // Второй байт (восстанавливаем пропавший 0x04)
+      }
+      // Латинские буквы, цифры, знаки (0x20-0x7E) после управляющего символа
+      // Это первый байт следующего UTF-16LE символа (второй байт 0x04 пропал)
+      else if (charCode >= 0x20 && charCode < 0x7F) {
+        bytes.push(charCode);  // Первый байт
+        bytes.push(0x04);      // Второй байт (восстанавливаем пропавший 0x04)
+      }
+      // Остальные символы (уже в правильной кодировке или не UTF-16LE)
+      else {
+        // Для двухбайтовых символов разбиваем на байты
+        if (charCode < 0x100) {
+          bytes.push(charCode);
+          bytes.push(0x00);
+        } else {
+          bytes.push(charCode & 0xFF);
+          bytes.push((charCode >> 8) & 0xFF);
+        }
+      }
+    }
+    
+    const buffer = Buffer.from(bytes);
+    const decoded = iconv.decode(buffer, 'utf16le');
+    
+    // Убираем BOM если есть
+    const cleaned = decoded.replace(/^\uFEFF/, '').trim();
+    
+    // Если декодирование дало осмысленный результат (содержит кириллицу), используем его
+    if (cleaned !== str && cleaned.length > 0 && /[а-яА-ЯёЁ]/.test(cleaned)) {
+      logger.debug("UTF16Decoder", "Декодирована UTF-16LE строка", {
+        original: str.substring(0, 30),
+        decoded: cleaned.substring(0, 50),
+      });
+      return cleaned;
+    }
+  } catch (error) {
+    // Если декодирование не удалось, возвращаем оригинал
+    logger.debug("UTF16Decoder", "Не удалось декодировать как UTF-16LE", { 
+      str: str.substring(0, 30),
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  
+  return str;
+}
 
 export interface ParseResult {
   chargeRows: ChargeRow[];
@@ -277,10 +373,14 @@ export class FileParser {
     if (value === null || value === undefined) return "";
     const str = getString(value);
     
-    // ВАЖНО: Всегда применяем декодирование, даже если конвертация была
-    // потому что на Vercel Python может не работать, и конвертация может не произойти
-    // или данные могут быть не полностью декодированы
-    const decoded = fixEncoding(str);
+    // Шаг 1: Пытаемся декодировать UTF-16LE (если строка была неправильно прочитана)
+    let decoded = decodeUtf16LeString(str);
+    
+    // Шаг 2: Если UTF-16LE декодирование не помогло, применяем KOI-7 декодирование
+    // (для обратной совместимости с файлами, которые действительно используют KOI-7)
+    if (decoded === str) {
+      decoded = fixEncoding(str);
+    }
     
     // Логируем только если декодирование изменило строку (для отладки)
     if (decoded !== str && str.length > 0 && str.length < 100) {
@@ -288,6 +388,7 @@ export class FileParser {
         original: str.substring(0, 50),
         decoded: decoded.substring(0, 50),
         wasConverted,
+        method: decoded !== decodeUtf16LeString(str) ? "UTF-16LE" : "KOI-7",
       });
     }
     
