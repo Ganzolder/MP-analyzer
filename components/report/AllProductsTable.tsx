@@ -6,23 +6,26 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Search, ChevronUp, ChevronDown, ChevronsUpDown, ChevronRight, BarChart3 } from "lucide-react";
+import { Search, ChevronUp, ChevronDown, ChevronsUpDown, ChevronRight, BarChart3, RotateCcw } from "lucide-react";
 import { formatCurrency, cn } from "@/lib/utils";
 import type { ProductData } from "@/lib/types/analysis";
 import type { AggregatedOrder } from "@/lib/analysis/types";
 import { ProductSalesAnalytics } from "./ProductSalesAnalytics";
+import { Checkbox } from "@/components/ui/checkbox";
+import { useToast } from "@/components/ui/use-toast";
 
 interface AllProductsTableProps {
   products: ProductData[];
   orders?: AggregatedOrder[];
   analysisId?: string;
   summary?: any;
+  onRecalculate?: (excludedSkus: string[]) => void;
 }
 
 type SortField = "name" | "sku" | "revenue" | "profit" | "netProfit" | "profitMargin" | "returnRate" | "orders";
 type SortDirection = "asc" | "desc" | null;
 
-export function AllProductsTable({ products, orders = [], analysisId, summary }: AllProductsTableProps) {
+export function AllProductsTable({ products, orders = [], analysisId, summary, onRecalculate }: AllProductsTableProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -31,6 +34,9 @@ export function AllProductsTable({ products, orders = [], analysisId, summary }:
   const [isOpen, setIsOpen] = useState(true);
   const [selectedProduct, setSelectedProduct] = useState<ProductData | null>(null);
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
+  const [selectedSkus, setSelectedSkus] = useState<Set<string>>(new Set());
+  const [isRecalculating, setIsRecalculating] = useState(false);
+  const { toast } = useToast();
   
   // Фильтры
   const [minRevenue, setMinRevenue] = useState<string>("");
@@ -270,6 +276,75 @@ export function AllProductsTable({ products, orders = [], analysisId, summary }:
     setCurrentPage(1);
   };
 
+  const handleToggleProduct = (sku: string) => {
+    const newSelected = new Set(selectedSkus);
+    if (newSelected.has(sku)) {
+      newSelected.delete(sku);
+    } else {
+      newSelected.add(sku);
+    }
+    setSelectedSkus(newSelected);
+  };
+
+  const handleSelectAll = () => {
+    if (selectedSkus.size === filteredProducts.length) {
+      setSelectedSkus(new Set());
+    } else {
+      setSelectedSkus(new Set(filteredProducts.map(p => p.sku)));
+    }
+  };
+
+  const handleRecalculate = async () => {
+    if (selectedSkus.size === 0) {
+      toast({
+        title: "Не выбраны товары",
+        description: "Выберите товары для исключения из расчётов",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsRecalculating(true);
+    try {
+      if (onRecalculate) {
+        await onRecalculate(Array.from(selectedSkus));
+        toast({
+          title: "Пересчёт выполнен",
+          description: `Исключено товаров: ${selectedSkus.size}`,
+        });
+        setSelectedSkus(new Set());
+      } else {
+        // Если onRecalculate не передан, вызываем API напрямую
+        const response = await fetch(`/api/analysis/${analysisId}/recalculate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ excludedSkus: Array.from(selectedSkus) }),
+        });
+
+        if (!response.ok) {
+          throw new Error("Ошибка при пересчёте");
+        }
+
+        const recalculated = await response.json();
+        toast({
+          title: "Пересчёт выполнен",
+          description: `Исключено товаров: ${selectedSkus.size}`,
+        });
+        setSelectedSkus(new Set());
+        // Обновляем данные через callback или window.location.reload()
+        window.location.reload();
+      }
+    } catch (error: any) {
+      toast({
+        title: "Ошибка при пересчёте",
+        description: error.message || "Не удалось выполнить пересчёт",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRecalculating(false);
+    }
+  };
+
   return (
     <Card className="glass">
       <Collapsible open={isOpen} onOpenChange={setIsOpen}>
@@ -389,6 +464,27 @@ export function AllProductsTable({ products, orders = [], analysisId, summary }:
                   Сбросить фильтры
                 </Button>
               )}
+
+              {/* Панель выбора товаров для исключения */}
+              <div className="flex items-center justify-between gap-4 p-4 bg-muted/30 rounded-lg border">
+                <div className="flex items-center gap-4">
+                  <Checkbox
+                    checked={filteredProducts.length > 0 && selectedSkus.size === filteredProducts.length}
+                    onCheckedChange={handleSelectAll}
+                  />
+                  <span className="text-sm">
+                    Выбрано: {selectedSkus.size} из {filteredProducts.length}
+                  </span>
+                </div>
+                <Button
+                  onClick={handleRecalculate}
+                  disabled={selectedSkus.size === 0 || isRecalculating}
+                  className="gap-2"
+                >
+                  <RotateCcw className={cn("h-4 w-4", isRecalculating && "animate-spin")} />
+                  {isRecalculating ? "Пересчитываем..." : "Пересчитать"}
+                </Button>
+              </div>
             </div>
 
             {/* Панель с агрегированными суммами по отфильтрованным товарам */}
@@ -455,6 +551,12 @@ export function AllProductsTable({ products, orders = [], analysisId, summary }:
                     <thead>
                       <tr className="border-b">
                         <th className="text-left py-3 px-2 font-medium w-8"></th>
+                        <th className="text-left py-3 px-2 font-medium w-10">
+                          <Checkbox
+                            checked={filteredProducts.length > 0 && selectedSkus.size === filteredProducts.length}
+                            onCheckedChange={handleSelectAll}
+                          />
+                        </th>
                         <th
                           className="text-left py-3 px-2 font-medium cursor-pointer hover:bg-muted/50 select-none"
                           onClick={() => handleSort("sku")}
@@ -532,10 +634,14 @@ export function AllProductsTable({ products, orders = [], analysisId, summary }:
                     </thead>
                     <tbody>
                       {paginatedProducts.map((product, index) => {
+                        const isSelected = selectedSkus.has(product.sku);
                         return (
                           <tr 
                             key={index} 
-                            className="border-b last:border-0 hover:bg-muted/30"
+                            className={cn(
+                              "border-b last:border-0 hover:bg-muted/30",
+                              isSelected && "bg-primary/5"
+                            )}
                           >
                             <td className="py-3 px-2">
                               <Button
@@ -550,6 +656,12 @@ export function AllProductsTable({ products, orders = [], analysisId, summary }:
                               >
                                 <BarChart3 className="h-4 w-4" />
                               </Button>
+                            </td>
+                            <td className="py-3 px-2">
+                              <Checkbox
+                                checked={isSelected}
+                                onCheckedChange={() => handleToggleProduct(product.sku)}
+                              />
                             </td>
                             <td className="py-3 px-2 font-mono text-xs">{product.sku || "-"}</td>
                             <td className="py-3 px-2 max-w-[300px]">

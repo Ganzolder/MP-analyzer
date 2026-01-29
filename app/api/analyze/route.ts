@@ -11,8 +11,8 @@ import type { AggregatedOrder, OrderStatus } from "@/lib/analysis/types";
 // Путь к демо-файлу
 const DEMO_FILE_PATH = path.join(process.cwd(), "test", "Отчет по начислениям_01.10.2025-31.10.2025 (2).xlsx");
 
-// Максимальный размер файла (12 MB для Vercel Pro)
-const MAX_FILE_SIZE = 12 * 1024 * 1024; // 12 MB
+// Максимальный размер файла (20 MB для Vercel Pro)
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
 
 /**
  * POST /api/analyze
@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
         // Проверка размера каждого файла
         if (file.size > MAX_FILE_SIZE) {
           return NextResponse.json(
-            { error: "Файл слишком большой", message: `Файл "${file.name}" превышает максимальный размер 12 MB` },
+            { error: "Файл слишком большой", message: `Файл "${file.name}" превышает максимальный размер 15 MB` },
             { status: 400 }
           );
         }
@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
       if (costFile) {
         if (costFile.size > MAX_FILE_SIZE) {
           return NextResponse.json(
-            { error: "Файл себестоимости слишком большой", message: `Файл "${costFile.name}" превышает максимальный размер 12 MB` },
+            { error: "Файл себестоимости слишком большой", message: `Файл "${costFile.name}" превышает максимальный размер 15 MB` },
             { status: 400 }
           );
         }
@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
       if (totalSize > MAX_FILE_SIZE) {
         const totalSizeMB = (totalSize / 1024 / 1024).toFixed(2);
         return NextResponse.json(
-          { error: "Общий размер файлов слишком большой", message: `Общий размер всех файлов (${totalSizeMB} MB) превышает максимальный размер 12 MB` },
+          { error: "Общий размер файлов слишком большой", message: `Общий размер всех файлов (${totalSizeMB} MB) превышает максимальный размер 15 MB` },
           { status: 400 }
         );
       }
@@ -1039,3 +1039,8 @@ function recalculateOrderStatusForMerged(order: any): OrderStatus {
   // По умолчанию - завершен (включая случаи, когда totalAmountRub = 0 из-за компенсации эквайринга)
   return "completed";
 }
+
+// Конфигурация для увеличения лимита размера тела запроса до 15 MB
+// Next.js App Router использует maxDuration вместо bodyParser config
+// Размер тела запроса контролируется через vercel.json или runtime config
+export const maxDuration = 300; // 5 минут

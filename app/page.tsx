@@ -267,14 +267,14 @@ export default function HomePage() {
       return;
     }
     
-    // Проверка размера файлов (Vercel Pro план: до 12 MB на один файл)
-    const MAX_SINGLE_FILE_SIZE = 12 * 1024 * 1024; // 12 MB на один файл
+    // Проверка размера файлов (Vercel Pro план: до 20 MB на один файл)
+    const MAX_SINGLE_FILE_SIZE = 20 * 1024 * 1024; // 20 MB на один файл
     
     // Проверка размера каждого файла отдельно
     const oversizedFiles = filesToAnalyze.filter(f => f.file.size > MAX_SINGLE_FILE_SIZE);
     if (oversizedFiles.length > 0) {
       const fileNames = oversizedFiles.map(f => f.name).join(", ");
-      setUploadError(`Файл(ы) слишком большой(ие): ${fileNames}. Максимальный размер одного файла: 12 MB`);
+      setUploadError(`Файл(ы) слишком большой(ие): ${fileNames}. Максимальный размер одного файла: 20 MB`);
       return;
     }
     
@@ -282,7 +282,7 @@ export default function HomePage() {
     if (costFile) {
       // Проверяем размер файла себестоимости
       if (costFile.size > MAX_SINGLE_FILE_SIZE) {
-        setUploadError(`Файл себестоимости слишком большой: ${costFile.name}. Максимальный размер: 12 MB`);
+        setUploadError(`Файл себестоимости слишком большой: ${costFile.name}. Максимальный размер: 20 MB`);
         return;
       }
     }
@@ -495,7 +495,7 @@ export default function HomePage() {
       
       // Специальные сообщения для известных ошибок
       if (errorMessage.includes("413") || errorMessage.includes("Request Entity Too Large")) {
-        errorMessage = "Файл слишком большой. Максимальный размер: 12 MB. Попробуйте загрузить файл меньшего размера.";
+        errorMessage = "Файл слишком большой. Максимальный размер: 15 MB. Попробуйте загрузить файл меньшего размера.";
       } else if (errorMessage.includes("504") || errorMessage.includes("Gateway Timeout") || errorMessage.includes("timeout")) {
         errorMessage = "Превышено время ожидания. Файл слишком большой для обработки. Попробуйте загрузить файл меньшего размера.";
       } else if (errorMessage.includes("500") || errorMessage.includes("Internal Server Error")) {
@@ -583,7 +583,7 @@ export default function HomePage() {
       
       // Специальные сообщения для известных ошибок
       if (errorMessage.includes("413") || errorMessage.includes("Request Entity Too Large")) {
-        errorMessage = "Файл слишком большой. Максимальный размер: 12 MB.";
+        errorMessage = "Файл слишком большой. Максимальный размер: 15 MB.";
       } else if (errorMessage.includes("504") || errorMessage.includes("Gateway Timeout") || errorMessage.includes("timeout")) {
         errorMessage = "Превышено время ожидания. Попробуйте ещё раз.";
       } else if (errorMessage.includes("500") || errorMessage.includes("Internal Server Error")) {
@@ -664,6 +664,7 @@ export default function HomePage() {
               title="Перетащите файлы сюда"
               description="или нажмите для выбора нескольких файлов отчётов (помесячных) из личного кабинета Ozon"
               error={uploadError}
+              maxSize={20 * 1024 * 1024} // 20 MB
             />
           </div>
           

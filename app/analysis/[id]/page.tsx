@@ -350,6 +350,13 @@ export default function AnalysisPage() {
                 orders={data.orders || []} 
                 analysisId={id}
                 summary={data.summary}
+                onRecalculate={async (excludedSkus) => {
+                  // Импортируем утилиту для пересчёта
+                  const { recalculateWithExclusions } = await import("@/lib/analysis/utils/recalculate-with-exclusions");
+                  const recalculated = recalculateWithExclusions(data, excludedSkus);
+                  setData(recalculated);
+                  setAnalysisResult(recalculated);
+                }}
               />
             </TabsContent>
             
