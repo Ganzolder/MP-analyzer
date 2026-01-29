@@ -107,11 +107,46 @@ export default function HomePage() {
     }
     
     // Проверка размера файлов (Vercel ограничение: 4.5 MB для Serverless Functions)
-    const MAX_FILE_SIZE = 4 * 1024 * 1024; // 4 MB (оставляем запас)
-    const oversizedFiles = filesToAnalyze.filter(f => f.file.size > MAX_FILE_SIZE);
+    const MAX_SINGLE_FILE_SIZE = 4 * 1024 * 1024; // 4 MB на один файл
+    const MAX_TOTAL_SIZE = 4 * 1024 * 1024; // 4 MB общий размер всех файлов (с запасом от 4.5 MB)
+    
+    // Проверка размера каждого файла отдельно
+    const oversizedFiles = filesToAnalyze.filter(f => f.file.size > MAX_SINGLE_FILE_SIZE);
     if (oversizedFiles.length > 0) {
       const fileNames = oversizedFiles.map(f => f.name).join(", ");
-      setUploadError(`Файл(ы) слишком большой(ие): ${fileNames}. Максимальный размер: 4 MB`);
+      setUploadError(`Файл(ы) слишком большой(ие): ${fileNames}. Максимальный размер одного файла: 4 MB`);
+      return;
+    }
+    
+    // Проверка общего размера всех файлов
+    let totalSize = 0;
+    filesToAnalyze.forEach(file => {
+      totalSize += file.file.size;
+    });
+    
+    // Учитываем файл себестоимости
+    if (costFile) {
+      // Проверяем размер файла себестоимости
+      if (costFile.size > MAX_SINGLE_FILE_SIZE) {
+        setUploadError(`Файл себестоимости слишком большой: ${costFile.name}. Максимальный размер: 4 MB`);
+        return;
+      }
+      totalSize += costFile.size;
+    }
+    
+    // Учитываем накладные расходы FormData (примерно 1-2 KB на файл + boundary)
+    const formDataOverhead = (filesToAnalyze.length + (costFile ? 1 : 0)) * 2 * 1024; // 2 KB на файл
+    totalSize += formDataOverhead;
+    
+    if (totalSize > MAX_TOTAL_SIZE) {
+      const totalSizeMB = (totalSize / 1024 / 1024).toFixed(2);
+      const maxSizeMB = (MAX_TOTAL_SIZE / 1024 / 1024).toFixed(0);
+      const filesCount = filesToAnalyze.length + (costFile ? 1 : 0);
+      setUploadError(
+        `Общий размер всех файлов (${filesCount} шт.) слишком большой: ${totalSizeMB} MB. ` +
+        `Максимальный общий размер: ${maxSizeMB} MB. ` +
+        `Попробуйте загрузить меньше файлов или уменьшите их размер.`
+      );
       return;
     }
     
