@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
         // Проверка размера каждого файла
         if (file.size > MAX_FILE_SIZE) {
           return NextResponse.json(
-            { error: "Файл слишком большой", message: `Файл "${file.name}" превышает максимальный размер 15 MB` },
+            { error: "Файл слишком большой", message: `Файл "${file.name}" превышает максимальный размер 20 MB` },
             { status: 400 }
           );
         }
@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
       if (costFile) {
         if (costFile.size > MAX_FILE_SIZE) {
           return NextResponse.json(
-            { error: "Файл себестоимости слишком большой", message: `Файл "${costFile.name}" превышает максимальный размер 15 MB` },
+            { error: "Файл себестоимости слишком большой", message: `Файл "${costFile.name}" превышает максимальный размер 20 MB` },
             { status: 400 }
           );
         }
