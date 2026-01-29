@@ -14,6 +14,7 @@ import { useAnalysisStore } from "@/lib/store/analysis-store";
 import { useToast } from "@/components/ui/use-toast";
 import { hapticFeedback, generateId, delay } from "@/lib/utils";
 import { getMockAnalysisResult } from "@/lib/mock/analysis-mock";
+import type { FrontendAnalysisResult } from "@/lib/types/analysis";
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -97,6 +98,166 @@ export default function HomePage() {
   }, [clearCostFile]);
   
   // Запуск анализа
+  /**
+   * Объединяет результаты анализа нескольких чанков в один FrontendAnalysisResult
+   */
+  const mergeFrontendResults = (
+    results: FrontendAnalysisResult[],
+    analysisId: string,
+    files: Array<{ file: File; name: string }>
+  ): FrontendAnalysisResult => {
+    if (results.length === 0) {
+      throw new Error("Необходимо хотя бы один результат для объединения");
+    }
+    
+    if (results.length === 1) {
+      return { ...results[0], id: analysisId };
+    }
+    
+    const base = results[0];
+    // periodStart и periodEnd есть в summary (добавляются в transformToFrontendFormat)
+    const periodLabel = results.length > 0
+      ? `${new Date(Math.min(...results.map(r => {
+          const start = (r.summary as any).periodStart;
+          return start instanceof Date ? start.getTime() : new Date(start).getTime();
+        }))).toLocaleDateString("ru-RU")} - ${new Date(Math.max(...results.map(r => {
+          const end = (r.summary as any).periodEnd;
+          return end instanceof Date ? end.getTime() : new Date(end).getTime();
+        }))).toLocaleDateString("ru-RU")}`
+      : (typeof base.period === 'string' ? base.period : String(base.period));
+    
+    const merged: FrontendAnalysisResult = {
+      ...base,
+      id: analysisId,
+      fileName: files.length === 1
+        ? files[0].name
+        : `Объединённый отчёт (${files.length} файлов)`,
+      period: periodLabel as any, // FrontendAnalysisResult.period должен быть string, но тип наследуется от AnalyzerAnalysisResult
+      
+      // Объединяем summary
+      summary: {
+        ...base.summary,
+        ...({
+          periodStart: new Date(Math.min(...results.map(r => {
+            const start = (r.summary as any).periodStart;
+            return start instanceof Date ? start.getTime() : new Date(start).getTime();
+          }))),
+          periodEnd: new Date(Math.max(...results.map(r => {
+            const end = (r.summary as any).periodEnd;
+            return end instanceof Date ? end.getTime() : new Date(end).getTime();
+          }))),
+        } as any),
+        grossRevenue: results.reduce((sum, r) => sum + r.summary.grossRevenue, 0),
+        revenueAmount: results.reduce((sum, r) => sum + r.summary.revenueAmount, 0),
+        pointsAmount: results.reduce((sum, r) => sum + r.summary.pointsAmount, 0),
+        ozonFees: results.reduce((sum, r) => sum + r.summary.ozonFees, 0),
+        netPayout: results.reduce((sum, r) => sum + r.summary.netPayout, 0),
+        totalOrders: results.reduce((sum, r) => sum + r.summary.totalOrders, 0),
+        completedOrders: results.reduce((sum, r) => sum + r.summary.completedOrders, 0),
+        returnedOrders: results.reduce((sum, r) => sum + r.summary.returnedOrders, 0),
+        partialReturns: results.reduce((sum, r) => sum + r.summary.partialReturns, 0),
+        cancelledOrders: results.reduce((sum, r) => sum + (r.summary.cancelledOrders || 0), 0),
+        totalCost: results.reduce((sum, r) => sum + (r.summary.totalCost || 0), 0),
+        totalCostSold: results.reduce((sum, r) => sum + (r.summary.totalCostSold || 0), 0),
+        totalNetProfit: results.reduce((sum, r) => sum + (r.summary.totalNetProfit || 0), 0),
+        avgOrderValue: 0, // Пересчитаем ниже
+        returnRate: 0, // Пересчитаем ниже
+        feesPercent: 0, // Пересчитаем ниже
+      },
+      
+      // Объединяем costBreakdown (это массив)
+      costBreakdown: (Array.isArray(base.costBreakdown) ? results.reduce((acc, r) => {
+        const rCostBreakdown = Array.isArray(r.costBreakdown) ? r.costBreakdown : [];
+        return acc.map((item, index) => ({
+          ...item,
+          amount: item.amount + (rCostBreakdown[index]?.amount || 0),
+        }));
+      }, base.costBreakdown as any[]) : base.costBreakdown) as any,
+      
+      // Объединяем orders
+      orders: results.flatMap(r => r.orders || []),
+      
+      // Объединяем topProducts и worstProducts
+      topProducts: results.flatMap(r => r.topProducts || []),
+      worstProducts: results.flatMap(r => r.worstProducts || []),
+      lossProducts: results.flatMap(r => r.lossProducts || []),
+      
+      // Объединяем profitTrends
+      profitTrends: results.flatMap(r => r.profitTrends || []),
+      
+      // Объединяем recommendations
+      recommendations: results.flatMap(r => r.recommendations || []),
+      
+      // Объединяем problemAreas
+      problemAreas: results.flatMap(r => r.problemAreas || []),
+    };
+    
+    // Пересчитываем метрики
+    merged.summary.avgOrderValue = merged.summary.totalOrders > 0
+      ? merged.summary.grossRevenue / merged.summary.totalOrders
+      : 0;
+    merged.summary.returnRate = merged.summary.totalOrders > 0
+      ? ((merged.summary.returnedOrders + merged.summary.partialReturns) / merged.summary.totalOrders) * 100
+      : 0;
+    merged.summary.feesPercent = merged.summary.grossRevenue > 0
+      ? (merged.summary.ozonFees / merged.summary.grossRevenue) * 100
+      : 0;
+    
+    // Пересчитываем проценты в costBreakdown (если это массив)
+    if (Array.isArray(merged.costBreakdown)) {
+      const totalCost = merged.costBreakdown.reduce((sum: number, c: any) => sum + (c.amount || 0), 0);
+      merged.costBreakdown = merged.costBreakdown.map((c: any) => ({
+        ...c,
+        percent: totalCost > 0 ? Math.round((c.amount / totalCost) * 100) : 0,
+      })) as any;
+    }
+    
+    return merged;
+  };
+
+  /**
+   * Разбивает файлы на чанки для загрузки порциями
+   * Каждый чанк не должен превышать 4.5 МБ (ограничение Next.js API Routes)
+   * И не более 6 файлов в чанке
+   */
+  const splitFilesIntoChunks = (
+    files: Array<{ file: File; name: string }>,
+    costFile?: { file: File; name: string }
+  ): Array<Array<{ file: File; name: string }>> => {
+    const CHUNK_MAX_SIZE = 4.5 * 1024 * 1024; // 4.5 МБ на чанк
+    const CHUNK_MAX_FILES = 6; // Максимум 6 файлов в чанке
+    const chunks: Array<Array<{ file: File; name: string }>> = [];
+    let currentChunk: Array<{ file: File; name: string }> = [];
+    let currentChunkSize = 0;
+    
+    // Файл себестоимости будет добавлен к каждому чанку (он один и тот же для всех)
+    const costFileSize = costFile ? costFile.file.size : 0;
+    const formDataOverhead = 2 * 1024; // 2 KB на файл для FormData
+    
+    for (const file of files) {
+      const fileSize = file.file.size + formDataOverhead;
+      const wouldExceedSize = currentChunkSize + fileSize + costFileSize > CHUNK_MAX_SIZE;
+      const wouldExceedCount = currentChunk.length >= CHUNK_MAX_FILES;
+      
+      // Если текущий чанк заполнен (по размеру или количеству), начинаем новый
+      if ((wouldExceedSize || wouldExceedCount) && currentChunk.length > 0) {
+        chunks.push(currentChunk);
+        currentChunk = [];
+        currentChunkSize = 0;
+      }
+      
+      currentChunk.push(file);
+      currentChunkSize += fileSize;
+    }
+    
+    // Добавляем последний чанк, если он не пустой
+    if (currentChunk.length > 0) {
+      chunks.push(currentChunk);
+    }
+    
+    return chunks;
+  };
+
   const handleStartAnalysis = async () => {
     // Используем mainFiles если есть, иначе mainFile (для обратной совместимости)
     const filesToAnalyze = mainFiles.length > 0 ? mainFiles : (mainFile ? [mainFile] : []);
@@ -106,9 +267,8 @@ export default function HomePage() {
       return;
     }
     
-    // Проверка размера файлов (Vercel Pro план: до 12 MB)
+    // Проверка размера файлов (Vercel Pro план: до 12 MB на один файл)
     const MAX_SINGLE_FILE_SIZE = 12 * 1024 * 1024; // 12 MB на один файл
-    const MAX_TOTAL_SIZE = 12 * 1024 * 1024; // 12 MB общий размер всех файлов
     
     // Проверка размера каждого файла отдельно
     const oversizedFiles = filesToAnalyze.filter(f => f.file.size > MAX_SINGLE_FILE_SIZE);
@@ -118,12 +278,6 @@ export default function HomePage() {
       return;
     }
     
-    // Проверка общего размера всех файлов
-    let totalSize = 0;
-    filesToAnalyze.forEach(file => {
-      totalSize += file.file.size;
-    });
-    
     // Учитываем файл себестоимости
     if (costFile) {
       // Проверяем размер файла себестоимости
@@ -131,23 +285,6 @@ export default function HomePage() {
         setUploadError(`Файл себестоимости слишком большой: ${costFile.name}. Максимальный размер: 12 MB`);
         return;
       }
-      totalSize += costFile.size;
-    }
-    
-    // Учитываем накладные расходы FormData (примерно 1-2 KB на файл + boundary)
-    const formDataOverhead = (filesToAnalyze.length + (costFile ? 1 : 0)) * 2 * 1024; // 2 KB на файл
-    totalSize += formDataOverhead;
-    
-    if (totalSize > MAX_TOTAL_SIZE) {
-      const totalSizeMB = (totalSize / 1024 / 1024).toFixed(2);
-      const maxSizeMB = (MAX_TOTAL_SIZE / 1024 / 1024).toFixed(0);
-      const filesCount = filesToAnalyze.length + (costFile ? 1 : 0);
-      setUploadError(
-        `Общий размер всех файлов (${filesCount} шт.) слишком большой: ${totalSizeMB} MB. ` +
-        `Максимальный общий размер: ${maxSizeMB} MB. ` +
-        `Попробуйте загрузить меньше файлов или уменьшите их размер.`
-      );
-      return;
     }
     
     hapticFeedback("medium");
@@ -156,99 +293,178 @@ export default function HomePage() {
     const analysisId = generateId();
     startAnalysis(analysisId);
     
-    // Сохраняем totalSize для обработки ошибок
-    const savedTotalSize = totalSize;
-    
     try {
-      // Шаг 1: Загрузка файла
-      updateProgress(10, 0);
+      // Шаг 1: Разбиваем файлы на чанки
+      updateProgress(5, 0);
       
-      // Шаг 2: Отправляем на анализ через API
-      updateProgress(30, 1);
-      
-      const formData = new FormData();
-      
-      // Добавляем файлы (для множественной загрузки)
-      filesToAnalyze.forEach(file => {
-        formData.append("files", file.file);
+      const chunks = splitFilesIntoChunks(filesToAnalyze, costFile || undefined);
+      console.log(`📦 [Frontend] Файлы разбиты на ${chunks.length} чанк(ов)`, {
+        totalFiles: filesToAnalyze.length,
+        chunks: chunks.map((chunk, i) => ({
+          chunk: i + 1,
+          files: chunk.length,
+          size: (chunk.reduce((sum, f) => sum + f.file.size, 0) / 1024 / 1024).toFixed(2) + " MB",
+        })),
       });
       
-      // Для обратной совместимости также добавляем первый файл как "file"
-      if (filesToAnalyze.length > 0) {
-        formData.append("file", filesToAnalyze[0].file);
-      }
-      
-      formData.append("analysisId", analysisId);
-      
-      if (costFile) {
-        console.log("📤 [Frontend] Отправка файла себестоимости:", {
-          name: costFile.name,
-          size: costFile.size,
-          type: costFile.type,
+      // Если только один чанк, загружаем как обычно
+      if (chunks.length === 1) {
+        updateProgress(10, 0);
+        
+        const formData = new FormData();
+        
+        // Добавляем файлы (для множественной загрузки)
+        filesToAnalyze.forEach(file => {
+          formData.append("files", file.file);
         });
-        formData.append("costFile", costFile.file);
-      } else {
-        console.log("⚠️ [Frontend] Файл себестоимости НЕ выбран");
-      }
-      if (customPrompt) {
-        formData.append("customPrompt", customPrompt);
-      }
-      
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        body: formData,
-      });
-      
-      if (!response.ok) {
-        // Специальная обработка для ошибки 413 (Request Entity Too Large)
-        if (response.status === 413) {
-          const totalSizeMB = (savedTotalSize / 1024 / 1024).toFixed(2);
-          throw new Error(
-            `Ошибка 413: Файл(ы) слишком большой(ие) для загрузки на Vercel. ` +
-            `Размер: ${totalSizeMB} MB. ` +
-            `Vercel отклоняет запрос до обработки. ` +
-            `Максимальный размер: 12 MB. ` +
-            `Попробуйте загрузить файл(ы) меньшего размера или разделите на несколько загрузок.`
-          );
+        
+        // Для обратной совместимости также добавляем первый файл как "file"
+        if (filesToAnalyze.length > 0) {
+          formData.append("file", filesToAnalyze[0].file);
         }
         
-        // Проверяем Content-Type перед парсингом JSON
-        const contentType = response.headers.get("content-type");
-        let errorMessage = "Ошибка анализа";
+        formData.append("analysisId", analysisId);
         
-        if (contentType && contentType.includes("application/json")) {
-          try {
-            const error = await response.json();
-            errorMessage = error.message || error.error || `Ошибка ${response.status}: ${response.statusText}`;
-          } catch (e) {
-            errorMessage = `Ошибка ${response.status}: ${response.statusText}`;
-          }
-        } else {
-          // Если не JSON, читаем как текст
-          try {
-            const text = await response.text();
-            errorMessage = text || `Ошибка ${response.status}: ${response.statusText}`;
-          } catch (e) {
-            errorMessage = `Ошибка ${response.status}: ${response.statusText}`;
-          }
+        if (costFile) {
+          formData.append("costFile", costFile.file);
+        }
+        if (customPrompt) {
+          formData.append("customPrompt", customPrompt);
         }
         
-        throw new Error(errorMessage);
+        updateProgress(30, 1);
+        
+        const response = await fetch("/api/analyze", {
+          method: "POST",
+          body: formData,
+        });
+        
+        if (!response.ok) {
+          const contentType = response.headers.get("content-type");
+          let errorMessage = "Ошибка анализа";
+          
+          if (contentType && contentType.includes("application/json")) {
+            try {
+              const error = await response.json();
+              errorMessage = error.message || error.error || `Ошибка ${response.status}: ${response.statusText}`;
+            } catch (e) {
+              errorMessage = `Ошибка ${response.status}: ${response.statusText}`;
+            }
+          } else {
+            try {
+              const text = await response.text();
+              errorMessage = text || `Ошибка ${response.status}: ${response.statusText}`;
+            } catch (e) {
+              errorMessage = `Ошибка ${response.status}: ${response.statusText}`;
+            }
+          }
+          
+          throw new Error(errorMessage);
+        }
+        
+        updateProgress(90, 4);
+        
+        const result = await response.json();
+        
+        updateProgress(100, 5);
+        completeAnalysis(result);
+        
+        await delay(500);
+        closeProgressModal();
+        
+        router.push(`/analysis/${analysisId}`);
+        return;
       }
       
-      updateProgress(90, 4);
+      // Несколько чанков - загружаем порциями
+      const allResults: FrontendAnalysisResult[] = [];
+      const totalChunks = chunks.length;
       
-      const result = await response.json();
+      for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+        const chunk = chunks[chunkIndex];
+        const chunkProgress = 10 + (chunkIndex / totalChunks) * 80; // 10-90%
+        
+        console.log(`📤 [Frontend] Загрузка чанка ${chunkIndex + 1}/${totalChunks}`, {
+          files: chunk.map(f => f.name),
+          size: (chunk.reduce((sum, f) => sum + f.file.size, 0) / 1024 / 1024).toFixed(2) + " MB",
+        });
+        
+        updateProgress(chunkProgress, chunkIndex + 1);
+        
+        const formData = new FormData();
+        
+        // Добавляем файлы из текущего чанка
+        chunk.forEach(file => {
+          formData.append("files", file.file);
+        });
+        
+        // Для обратной совместимости также добавляем первый файл как "file"
+        if (chunk.length > 0) {
+          formData.append("file", chunk[0].file);
+        }
+        
+        formData.append("analysisId", `${analysisId}-chunk-${chunkIndex}`);
+        
+        // Файл себестоимости добавляем к каждому чанку
+        if (costFile) {
+          formData.append("costFile", costFile.file);
+        }
+        if (customPrompt) {
+          formData.append("customPrompt", customPrompt);
+        }
+        
+        const response = await fetch("/api/analyze", {
+          method: "POST",
+          body: formData,
+        });
+        
+        if (!response.ok) {
+          const contentType = response.headers.get("content-type");
+          let errorMessage = `Ошибка при загрузке чанка ${chunkIndex + 1}/${totalChunks}`;
+          
+          if (contentType && contentType.includes("application/json")) {
+            try {
+              const error = await response.json();
+              errorMessage = error.message || error.error || `Ошибка ${response.status}: ${response.statusText}`;
+            } catch (e) {
+              errorMessage = `Ошибка ${response.status}: ${response.statusText}`;
+            }
+          } else {
+            try {
+              const text = await response.text();
+              errorMessage = text || `Ошибка ${response.status}: ${response.statusText}`;
+            } catch (e) {
+              errorMessage = `Ошибка ${response.status}: ${response.statusText}`;
+            }
+          }
+          
+          throw new Error(errorMessage);
+        }
+        
+        const chunkResult = await response.json();
+        allResults.push(chunkResult);
+        
+        console.log(`✅ [Frontend] Чанк ${chunkIndex + 1}/${totalChunks} обработан`, {
+          revenue: chunkResult.summary?.grossRevenue || 0,
+          orders: chunkResult.summary?.totalOrders || 0,
+        });
+      }
       
-      updateProgress(100, 5);
-      completeAnalysis(result);
+      // Объединяем результаты всех чанков
+      updateProgress(95, totalChunks + 1);
+      console.log(`🔄 [Frontend] Объединение результатов ${allResults.length} чанк(ов)`);
       
-      // Небольшая задержка перед редиректом
+      // Объединяем FrontendAnalysisResult (результаты уже в формате для фронтенда)
+      const mergedResult = mergeFrontendResults(allResults, analysisId, filesToAnalyze);
+      
+      updateProgress(100, totalChunks + 2);
+      completeAnalysis(mergedResult);
+      
       await delay(500);
       closeProgressModal();
       
       // Переходим на страницу результатов
-      router.push(`/analysis/${result.id}`);
+      router.push(`/analysis/${analysisId}`);
       
       toast({
         title: "Анализ завершён",
