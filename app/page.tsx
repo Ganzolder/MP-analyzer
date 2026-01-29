@@ -156,6 +156,9 @@ export default function HomePage() {
     const analysisId = generateId();
     startAnalysis(analysisId);
     
+    // Сохраняем totalSize для обработки ошибок
+    const savedTotalSize = totalSize;
+    
     try {
       // Шаг 1: Загрузка файла
       updateProgress(10, 0);
@@ -197,6 +200,18 @@ export default function HomePage() {
       });
       
       if (!response.ok) {
+        // Специальная обработка для ошибки 413 (Request Entity Too Large)
+        if (response.status === 413) {
+          const totalSizeMB = (savedTotalSize / 1024 / 1024).toFixed(2);
+          throw new Error(
+            `Ошибка 413: Файл(ы) слишком большой(ие) для загрузки на Vercel. ` +
+            `Размер: ${totalSizeMB} MB. ` +
+            `Vercel отклоняет запрос до обработки. ` +
+            `Максимальный размер: 12 MB. ` +
+            `Попробуйте загрузить файл(ы) меньшего размера или разделите на несколько загрузок.`
+          );
+        }
+        
         // Проверяем Content-Type перед парсингом JSON
         const contentType = response.headers.get("content-type");
         let errorMessage = "Ошибка анализа";
