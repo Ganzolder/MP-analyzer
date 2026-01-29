@@ -291,6 +291,11 @@ export default function HomePage() {
     setIsAnalyzing(true);
     
     const analysisId = generateId();
+    
+    // Очищаем исключённые товары при новом расчёте
+    const { useExcludedProductsStore } = await import("@/lib/store/excluded-products-store");
+    useExcludedProductsStore.getState().clearExcludedSkus();
+    
     startAnalysis(analysisId);
     
     try {
