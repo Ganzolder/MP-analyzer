@@ -266,8 +266,9 @@ export class OrderAggregator {
 
     const grossRevenue = revenueAmount + pointsAmount;
     
-    // Определяем отмененные заказы: выручка = 0 и есть эквайринг (клиент оплатил и отменил)
-    // Проверяем, есть ли строки с эквайрингом (положительные и отрицательные)
+    // ВАЖНО: Логика определения статуса заказа основана на итоговом эквайринге
+    // acquiringAmount = сумма всех эквайрингов по заказу (может быть положительной, отрицательной или нулевой)
+    // Проверяем, есть ли строки с эквайрингом
     const hasAcquiringCharges = rows.some(row => {
       const category = getChargeCategory(row.chargeType);
       return category === "acquiring";
@@ -276,9 +277,11 @@ export class OrderAggregator {
     // Проверяем, есть ли эквайринг с разными знаками (положительный и отрицательный)
     let hasPositiveAcquiring = false;
     let hasNegativeAcquiring = false;
+    let acquiringCount = 0; // Количество строк с эквайрингом
     for (const row of rows) {
       const category = getChargeCategory(row.chargeType);
       if (category === "acquiring") {
+        acquiringCount++;
         if (row.totalAmount > 0) {
           hasPositiveAcquiring = true;
         } else if (row.totalAmount < 0) {
@@ -287,9 +290,14 @@ export class OrderAggregator {
       }
     }
     
-    // Двойной эквайринг (положительный и отрицательный) - признак отмены заказа
-    // ВАЖНО: Если есть и положительный, и отрицательный эквайринг, это отмененный заказ
+    // Двойной эквайринг (положительный и отрицательный) - признак отмены или возврата
     const hasDoubleAcquiring = hasPositiveAcquiring && hasNegativeAcquiring;
+    
+    // Итоговый эквайринг (сумма всех эквайрингов по заказу)
+    // Если acquiringAmount > 0 - заказ не возвратный
+    // Если acquiringAmount = 0 - полный возврат (или отмена)
+    // Если acquiringAmount уменьшился от изначального - частичный возврат
+    const finalAcquiringAmount = acquiringAmount; // Уже посчитан выше как сумма всех acquiring начислений
     
     // Улучшенная логика определения возврата:
     // Если есть типы начислений возврата (Обратная логистика, Обработка возвратов Ozon и т.д.)
@@ -302,12 +310,13 @@ export class OrderAggregator {
     const isReturnByTypes = hasReturnType && !hasDoubleAcquiring;
     
     // Определяем отмененные заказы: двойной эквайринг (положительный и отрицательный),
-    // выручка = 0, totalAmountRub = 0 (или близок к 0), и нет возвратов
+    // итоговый эквайринг = 0, выручка = 0, totalAmountRub = 0 (или близок к 0), и нет возвратов
     // ВАЖНО: Если есть возвраты, это не отмена, а возврат
-    // Если только двойной эквайринг и totalAmountRub = 0 - это отмененный заказ
+    // Если только двойной эквайринг и итоговый эквайринг = 0 и totalAmountRub = 0 - это отмененный заказ
     const isCancelled = grossRevenue === 0 &&
       hasAcquiringCharges &&
       hasDoubleAcquiring &&
+      Math.abs(finalAcquiringAmount) < 0.01 && // Итоговый эквайринг = 0
       !hasReturnType &&
       !hasPartialReturnType &&
       (Math.abs(totalAmountRub) < 0.01); // totalAmountRub близок к 0
@@ -347,18 +356,31 @@ export class OrderAggregator {
       // Частичный невыкуп: если количество товаров после возвратов = 0, то это полный возврат
       status = quantity === 0 ? "returned" : "partial_return";
     } else if (isFullReturn || isReturnByTypes) {
-      // Возвраты:
-      // - если количество товаров после всех возвратов = 0 => полный возврат
-      // - если количество > 0 => частичный возврат
-      // ВАЖНО: Проверяем quantity, а не revenueAmount, так как выручка может быть положительной,
+      // Возвраты определяются по итоговому эквайрингу:
+      // - Если итоговый эквайринг = 0 (или близок к 0) => полный возврат
+      // - Если итоговый эквайринг > 0, но меньше изначального => частичный возврат
+      // - Если итоговый эквайринг > 0 и нет возвратов => обычный заказ (completed)
+      // ВАЖНО: Также проверяем quantity, так как выручка может быть положительной,
       // но все товары возвращены (например, из-за баллов за скидки)
-      if (quantity === 0) {
+      if (Math.abs(finalAcquiringAmount) < 0.01) {
+        // Итоговый эквайринг = 0 => полный возврат
         status = "returned";
+      } else if (quantity === 0) {
+        // Количество товаров = 0 => полный возврат
+        status = "returned";
+      } else if (finalAcquiringAmount > 0 && hasReturnType) {
+        // Итоговый эквайринг > 0, но есть возвраты => частичный возврат
+        status = "partial_return";
       } else if (revenueAmount > 0) {
+        // Есть выручка => частичный возврат
         status = "partial_return";
       } else {
         status = "returned";
       }
+    } else if (hasAcquiringCharges && finalAcquiringAmount > 0 && !hasReturnType && !hasPartialReturnType) {
+      // Если есть эквайринг и итоговый эквайринг > 0, и нет возвратов => обычный заказ
+      // Если эквайринг один (acquiringCount === 1) => обычный заказ
+      status = "completed";
     }
     const totalFees = Math.abs(commissionAmount) +
       Math.abs(logisticsAmount) +

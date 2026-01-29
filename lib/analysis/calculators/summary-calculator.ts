@@ -62,6 +62,20 @@ export class SummaryCalculator {
     let ordersWithoutCost = 0;
 
     const products = new Set<string>();
+    
+    // ВАЖНО: Подсчёт уникальных заказов должен быть по эквайрингу
+    // Заказ считается, если у него есть эквайринг (признак того, что человек что-то заказал)
+    // Даже если потом был возврат, эквайринг поле будет, и заказ должен считаться
+    const ordersWithAcquiring = orders.filter(order => {
+      // Проверяем наличие эквайринга: либо есть acquiringAmount > 0, либо есть типы начислений с эквайрингом
+      const hasAcquiringAmount = (order.acquiringAmount || 0) > 0;
+      const hasAcquiringType = order.chargeTypes && order.chargeTypes.some((ct: string) => {
+        // Проверяем, есть ли тип начисления "Эквайринг"
+        const lowerType = ct.toLowerCase();
+        return lowerType.includes("эквайринг") || lowerType.includes("-:209@8=3");
+      });
+      return hasAcquiringAmount || hasAcquiringType;
+    });
 
     for (const order of orders) {
       revenueAmount += order.revenueAmount;
@@ -81,16 +95,25 @@ export class SummaryCalculator {
         ordersWithoutCost++;
       }
 
-      if (order.status === "cancelled") {
-        cancelledOrders++;
-      } else if (order.status === "completed") {
-        completedOrders++;
-      } else if (order.status === "returned") {
-        returnedOrders++;
-      } else if (order.status === "partial_return") {
-        partialReturns++;
+      // Считаем статусы только для заказов с эквайрингом
+      const hasAcquiring = (order.acquiringAmount || 0) > 0 || 
+        (order.chargeTypes && order.chargeTypes.some((ct: string) => {
+          const lowerType = ct.toLowerCase();
+          return lowerType.includes("эквайринг") || lowerType.includes("-:209@8=3");
+        }));
+      
+      if (hasAcquiring) {
+        if (order.status === "cancelled") {
+          cancelledOrders++;
+        } else if (order.status === "completed") {
+          completedOrders++;
+        } else if (order.status === "returned") {
+          returnedOrders++;
+        } else if (order.status === "partial_return") {
+          partialReturns++;
+        }
+        // Статус "in_progress" не учитывается в статистике (заказы в работе)
       }
-      // Статус "in_progress" не учитывается в статистике (заказы в работе)
 
       if (order.sku || order.article) {
         products.add(order.sku || order.article);
@@ -133,8 +156,8 @@ export class SummaryCalculator {
 
     const grossRevenue = revenueAmount + pointsAmount;
     const feesPercent = grossRevenue > 0 ? (totalFees / grossRevenue) * 100 : 0;
-    const returnRate = orders.length > 0
-      ? (returnedOrders / orders.length) * 100
+    const returnRate = ordersWithAcquiring.length > 0
+      ? (returnedOrders / ordersWithAcquiring.length) * 100
       : 0;
     const avgCommission = grossRevenue > 0 ? (commissionSum / grossRevenue) * 100 : 0;
     const totalNetProfit = totalCostSold > 0 ? netPayout - totalCostSold : undefined;
@@ -146,7 +169,7 @@ export class SummaryCalculator {
       ozonFees: round(totalFees),
       netPayout: round(netPayout),
       feesPercent: round(feesPercent, 1),
-      totalOrders: orders.length,
+      totalOrders: ordersWithAcquiring.length, // Считаем только заказы с эквайрингом
       completedOrders,
       returnedOrders,
       partialReturns,
