@@ -1,0 +1,4 @@
+# Миграции Prisma будут созданы автоматически при выполнении:
+# npx prisma migrate dev --name init
+# 
+# После настройки DATABASE_URL для PostgreSQL

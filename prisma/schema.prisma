@@ -1,12 +1,12 @@
 // Prisma Schema для Ozon Analyzer
-// SQLite для MVP, легко мигрировать на PostgreSQL
+// PostgreSQL для production (Vercel)
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
