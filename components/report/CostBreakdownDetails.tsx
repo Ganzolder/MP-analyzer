@@ -8,6 +8,7 @@ import {
   ChevronDown,
   Info,
   Coins,
+  Eye,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,7 +19,16 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Badge } from "@/components/ui/badge";
-import { cn, formatCurrency } from "@/lib/utils";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { cn, formatCurrency, formatDate } from "@/lib/utils";
+import type { AggregatedOrder } from "@/lib/analysis/types";
+import { getChargeCategory } from "@/lib/analysis/constants";
 
 interface ChargeTypeDetail {
   name: string;
@@ -35,6 +45,7 @@ interface ChargeGroup {
 
 interface CostBreakdownDetailsProps {
   chargeTypeBreakdown: ChargeGroup[];
+  orders?: AggregatedOrder[];
 }
 
 /**
@@ -58,10 +69,15 @@ function isCostGroup(groupName: string): boolean {
 
 export function CostBreakdownDetails({
   chargeTypeBreakdown,
+  orders = [],
 }: CostBreakdownDetailsProps) {
   const [filterGroup, setFilterGroup] = useState<string>("Все");
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [selectedChargeType, setSelectedChargeType] = useState<{
+    name: string;
+    groupName: string;
+  } | null>(null);
 
   // Получаем уникальные группы (все начисления, включая выручку)
   const uniqueGroups = useMemo(() => {
@@ -234,15 +250,34 @@ export function CostBreakdownDetails({
                                       {chargeType.count} шт
                                     </p>
                                   </div>
-                                  <div className="text-right ml-2">
-                                    <p className={cn(
-                                      "text-sm font-semibold",
-                                      isPoints && "text-yellow-500",
-                                      !isPoints && isPositive && "text-success",
-                                      !isPoints && isNegative && "text-destructive"
-                                    )}>
-                                      {formatCurrency(displayAmount)}
-                                    </p>
+                                  <div className="flex items-center gap-2">
+                                    <div className="text-right">
+                                      <p className={cn(
+                                        "text-sm font-semibold",
+                                        isPoints && "text-yellow-500",
+                                        !isPoints && isPositive && "text-success",
+                                        !isPoints && isNegative && "text-destructive"
+                                      )}>
+                                        {formatCurrency(displayAmount)}
+                                      </p>
+                                    </div>
+                                    {orders.length > 0 && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-8 w-8 p-0"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setSelectedChargeType({
+                                            name: chargeType.name,
+                                            groupName: group.groupName,
+                                          });
+                                        }}
+                                        title="Показать расшифровку"
+                                      >
+                                        <Eye className="h-4 w-4" />
+                                      </Button>
+                                    )}
                                   </div>
                                 </div>
                               );
@@ -258,6 +293,147 @@ export function CostBreakdownDetails({
           )}
         </div>
       </CardContent>
+
+      {/* Модальное окно с расшифровкой */}
+      <Dialog open={selectedChargeType !== null} onOpenChange={(open) => !open && setSelectedChargeType(null)}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Расшифровка начислений</DialogTitle>
+            <DialogDescription>
+              {selectedChargeType && (
+                <>
+                  Тип начисления: <strong>{selectedChargeType.name}</strong>
+                  <br />
+                  Группа: <strong>{selectedChargeType.groupName}</strong>
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 overflow-auto">
+            {selectedChargeType && (
+              <ChargeDetailsTable
+                chargeTypeName={selectedChargeType.name}
+                orders={orders}
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </Card>
+  );
+}
+
+/**
+ * Компонент таблицы с детальной информацией о начислениях
+ */
+function ChargeDetailsTable({
+  chargeTypeName,
+  orders,
+}: {
+  chargeTypeName: string;
+  orders: AggregatedOrder[];
+}) {
+  // Фильтруем заказы, которые содержат этот тип начисления
+  const filteredOrders = useMemo(() => {
+    return orders.filter((order) => {
+      return order.chargeTypes?.some((ct) => ct === chargeTypeName);
+    });
+  }, [orders, chargeTypeName]);
+
+  // Определяем сумму начисления для каждого заказа
+  const ordersWithAmounts = useMemo(() => {
+    return filteredOrders.map((order) => {
+      const category = getChargeCategory(chargeTypeName);
+      let amount = 0;
+
+      // Определяем сумму начисления в зависимости от категории
+      switch (category) {
+        case "revenue":
+          amount = order.revenueAmount || 0;
+          break;
+        case "points":
+          amount = order.pointsAmount || 0;
+          break;
+        case "commission":
+          amount = order.commissionAmount || 0;
+          break;
+        case "logistics":
+          amount = order.logisticsAmount || 0;
+          break;
+        case "acquiring":
+          amount = order.acquiringAmount || 0;
+          break;
+        case "returnLogistics":
+        case "returnRevenue":
+        case "returnCommission":
+        case "returnProcessing":
+          amount = order.returnAmount || 0;
+          break;
+        default:
+          amount = order.otherFeesAmount || 0;
+      }
+
+      return {
+        order,
+        amount,
+      };
+    }).filter((item) => Math.abs(item.amount) > 0.01); // Фильтруем заказы с нулевой суммой
+  }, [filteredOrders, chargeTypeName]);
+
+  if (ordersWithAmounts.length === 0) {
+    return (
+      <div className="text-center py-8 text-muted-foreground">
+        Нет заказов с данным типом начисления
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full border-collapse">
+        <thead>
+          <tr className="border-b">
+            <th className="text-left py-3 px-4 font-medium text-sm">Заказ</th>
+            <th className="text-left py-3 px-4 font-medium text-sm">Дата</th>
+            <th className="text-left py-3 px-4 font-medium text-sm">Товар</th>
+            <th className="text-right py-3 px-4 font-medium text-sm">Тип начисления</th>
+            <th className="text-right py-3 px-4 font-medium text-sm">Сумма</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ordersWithAmounts.map(({ order, amount }, index) => (
+            <tr key={order.orderNumber} className="border-b hover:bg-muted/30">
+              <td className="py-3 px-4 font-mono text-xs">{order.orderNumber}</td>
+              <td className="py-3 px-4 text-sm">
+                {order.chargeDate ? formatDate(order.chargeDate) : order.orderDate ? formatDate(order.orderDate) : "-"}
+              </td>
+              <td className="py-3 px-4 text-sm max-w-[200px] truncate" title={order.productName}>
+                {order.productName || "Без названия"}
+              </td>
+              <td className="py-3 px-4 text-sm text-right">{chargeTypeName}</td>
+              <td className={cn(
+                "py-3 px-4 text-sm font-semibold text-right",
+                amount >= 0 ? "text-success" : "text-destructive"
+              )}>
+                {formatCurrency(amount)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="border-t font-semibold">
+            <td colSpan={4} className="py-3 px-4 text-right">Итого:</td>
+            <td className={cn(
+              "py-3 px-4 text-right",
+              ordersWithAmounts.reduce((sum, item) => sum + item.amount, 0) >= 0
+                ? "text-success"
+                : "text-destructive"
+            )}>
+              {formatCurrency(ordersWithAmounts.reduce((sum, item) => sum + item.amount, 0))}
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
   );
 }

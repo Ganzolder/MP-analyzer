@@ -319,6 +319,7 @@ export default function AnalysisPage() {
               {/* Детальный разбор по типам */}
               <CostBreakdownDetails
                 chargeTypeBreakdown={data.chargeTypeBreakdown || []}
+                orders={data.orders || []}
               />
             </TabsContent>
             
