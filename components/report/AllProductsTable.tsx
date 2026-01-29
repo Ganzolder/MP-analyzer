@@ -12,7 +12,9 @@ import type { ProductData } from "@/lib/types/analysis";
 import type { AggregatedOrder } from "@/lib/analysis/types";
 import { ProductSalesAnalytics } from "./ProductSalesAnalytics";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/use-toast";
+import { useExcludedProductsStore } from "@/lib/store/excluded-products-store";
 
 interface AllProductsTableProps {
   products: ProductData[];
@@ -37,6 +39,7 @@ export function AllProductsTable({ products, orders = [], analysisId, summary, o
   const [selectedSkus, setSelectedSkus] = useState<Set<string>>(new Set());
   const [isRecalculating, setIsRecalculating] = useState(false);
   const { toast } = useToast();
+  const { excludedSkus, addExcludedSku, removeExcludedSku, clearExcludedSkus } = useExcludedProductsStore();
   
   // Фильтры
   const [minRevenue, setMinRevenue] = useState<string>("");
@@ -101,8 +104,11 @@ export function AllProductsTable({ products, orders = [], analysisId, summary, o
       filtered = filtered.filter((p) => p.netProfit !== undefined && p.netProfit < 0);
     }
 
+    // Исключаем товары, которые уже были исключены из расчёта
+    filtered = filtered.filter((p) => !excludedSkus.has(p.sku));
+
     return filtered;
-  }, [products, searchQuery, minRevenue, minProfit, minNetProfit, minProfitMargin, minReturnRate, showOnlyUnprofitable]);
+  }, [products, searchQuery, minRevenue, minProfit, minNetProfit, minProfitMargin, minReturnRate, showOnlyUnprofitable, excludedSkus]);
 
   // Сортировка
   const sortedProducts = useMemo(() => {
@@ -309,6 +315,9 @@ export function AllProductsTable({ products, orders = [], analysisId, summary, o
 
     setIsRecalculating(true);
     try {
+      // Сохраняем исключённые товары в store
+      selectedSkus.forEach(sku => addExcludedSku(sku));
+      
       if (onRecalculate) {
         await onRecalculate(Array.from(selectedSkus));
         toast({
@@ -488,6 +497,40 @@ export function AllProductsTable({ products, orders = [], analysisId, summary, o
                   {isRecalculating ? "Пересчитываем..." : "Пересчитать"}
                 </Button>
               </div>
+
+              {/* Секция с исключёнными товарами */}
+              {excludedSkus.size > 0 && (
+                <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">Исключённые товары:</span>
+                      <Badge variant="outline">{excludedSkus.size}</Badge>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        clearExcludedSkus();
+                        if (onRecalculate) {
+                          onRecalculate([]);
+                        }
+                        toast({
+                          title: "Товары возвращены в расчёт",
+                          description: "Все исключённые товары возвращены в расчёт",
+                        });
+                      }}
+                      className="gap-2"
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                      Вернуть все в расчёт
+                    </Button>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {Array.from(excludedSkus).slice(0, 5).join(", ")}
+                    {excludedSkus.size > 5 && ` и ещё ${excludedSkus.size - 5}...`}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Панель с агрегированными суммами по отфильтрованным товарам */}

@@ -499,6 +499,12 @@ export default function AnalysisPage() {
                         orders: p.orders ?? p.ordersCount ?? 0,
                       }))}
                       title="Товары без себестоимости"
+                      onRecalculate={async (excludedSkus) => {
+                        const { recalculateWithExclusions } = await import("@/lib/analysis/utils/recalculate-with-exclusions");
+                        const recalculated = recalculateWithExclusions(data, excludedSkus);
+                        setData(recalculated);
+                        setAnalysisResult(recalculated);
+                      }}
                     />
                   )}
                   
