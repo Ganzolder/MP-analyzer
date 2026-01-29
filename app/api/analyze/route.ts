@@ -11,6 +11,9 @@ import type { AggregatedOrder, OrderStatus } from "@/lib/analysis/types";
 // Путь к демо-файлу
 const DEMO_FILE_PATH = path.join(process.cwd(), "test", "Отчет по начислениям_01.10.2025-31.10.2025 (2).xlsx");
 
+// Максимальный размер файла (15 MB)
+const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15 MB
+
 /**
  * POST /api/analyze
  * Анализ загруженного файла
@@ -70,7 +73,8 @@ export async function POST(request: NextRequest) {
         ? filesToProcess[0].name 
         : `Объединённый отчёт (${filesToProcess.length} файлов)`;
       
-      // Проверяем типы файлов
+      // Проверяем типы и размеры файлов
+      let totalSize = 0;
       for (const file of filesToProcess) {
         const lowerName = file.name.toLowerCase();
         if (!lowerName.endsWith(".xlsx") && !lowerName.endsWith(".xls")) {
@@ -79,6 +83,36 @@ export async function POST(request: NextRequest) {
             { status: 400 }
           );
         }
+        
+        // Проверка размера каждого файла
+        if (file.size > MAX_FILE_SIZE) {
+          return NextResponse.json(
+            { error: "Файл слишком большой", message: `Файл "${file.name}" превышает максимальный размер 15 MB` },
+            { status: 400 }
+          );
+        }
+        
+        totalSize += file.size;
+      }
+      
+      // Проверка файла себестоимости
+      if (costFile) {
+        if (costFile.size > MAX_FILE_SIZE) {
+          return NextResponse.json(
+            { error: "Файл себестоимости слишком большой", message: `Файл "${costFile.name}" превышает максимальный размер 15 MB` },
+            { status: 400 }
+          );
+        }
+        totalSize += costFile.size;
+      }
+      
+      // Проверка общего размера
+      if (totalSize > MAX_FILE_SIZE) {
+        const totalSizeMB = (totalSize / 1024 / 1024).toFixed(2);
+        return NextResponse.json(
+          { error: "Общий размер файлов слишком большой", message: `Общий размер всех файлов (${totalSizeMB} MB) превышает максимальный размер 15 MB` },
+          { status: 400 }
+        );
       }
       
       // Парсим файл себестоимости если загружен

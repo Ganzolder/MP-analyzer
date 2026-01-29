@@ -106,15 +106,15 @@ export default function HomePage() {
       return;
     }
     
-    // Проверка размера файлов (Vercel ограничение: 4.5 MB для Serverless Functions)
-    const MAX_SINGLE_FILE_SIZE = 4 * 1024 * 1024; // 4 MB на один файл
-    const MAX_TOTAL_SIZE = 4 * 1024 * 1024; // 4 MB общий размер всех файлов (с запасом от 4.5 MB)
+    // Проверка размера файлов (увеличено до 15 MB)
+    const MAX_SINGLE_FILE_SIZE = 15 * 1024 * 1024; // 15 MB на один файл
+    const MAX_TOTAL_SIZE = 15 * 1024 * 1024; // 15 MB общий размер всех файлов
     
     // Проверка размера каждого файла отдельно
     const oversizedFiles = filesToAnalyze.filter(f => f.file.size > MAX_SINGLE_FILE_SIZE);
     if (oversizedFiles.length > 0) {
       const fileNames = oversizedFiles.map(f => f.name).join(", ");
-      setUploadError(`Файл(ы) слишком большой(ие): ${fileNames}. Максимальный размер одного файла: 4 MB`);
+      setUploadError(`Файл(ы) слишком большой(ие): ${fileNames}. Максимальный размер одного файла: 15 MB`);
       return;
     }
     
@@ -128,7 +128,7 @@ export default function HomePage() {
     if (costFile) {
       // Проверяем размер файла себестоимости
       if (costFile.size > MAX_SINGLE_FILE_SIZE) {
-        setUploadError(`Файл себестоимости слишком большой: ${costFile.name}. Максимальный размер: 4 MB`);
+        setUploadError(`Файл себестоимости слишком большой: ${costFile.name}. Максимальный размер: 15 MB`);
         return;
       }
       totalSize += costFile.size;
@@ -248,7 +248,7 @@ export default function HomePage() {
       
       // Специальные сообщения для известных ошибок
       if (errorMessage.includes("413") || errorMessage.includes("Request Entity Too Large")) {
-        errorMessage = "Файл слишком большой. Максимальный размер: 4 MB. Попробуйте загрузить файл меньшего размера.";
+        errorMessage = "Файл слишком большой. Максимальный размер: 15 MB. Попробуйте загрузить файл меньшего размера.";
       } else if (errorMessage.includes("504") || errorMessage.includes("Gateway Timeout") || errorMessage.includes("timeout")) {
         errorMessage = "Превышено время ожидания. Файл слишком большой для обработки. Попробуйте загрузить файл меньшего размера.";
       } else if (errorMessage.includes("500") || errorMessage.includes("Internal Server Error")) {
@@ -336,7 +336,7 @@ export default function HomePage() {
       
       // Специальные сообщения для известных ошибок
       if (errorMessage.includes("413") || errorMessage.includes("Request Entity Too Large")) {
-        errorMessage = "Файл слишком большой. Максимальный размер: 4 MB.";
+        errorMessage = "Файл слишком большой. Максимальный размер: 15 MB.";
       } else if (errorMessage.includes("504") || errorMessage.includes("Gateway Timeout") || errorMessage.includes("timeout")) {
         errorMessage = "Превышено время ожидания. Попробуйте ещё раз.";
       } else if (errorMessage.includes("500") || errorMessage.includes("Internal Server Error")) {
