@@ -7,6 +7,7 @@ import * as iconv from "iconv-lite";
 // SheetJS codepage tables (важно для корректного декодирования legacy codepages)
 // https://github.com/SheetJS/js-codepage
 import * as cptable from "codepage";
+import jschardet from "jschardet";
 import { convertXlsxToXls } from "../converter";
 import { logger } from "@/lib/utils/logger";
 import { fixEncoding } from "../encoding";
@@ -141,6 +142,7 @@ const COLUMN_POSITIONS = {
 
 export class FileParser {
   private wasConverted: boolean = false;
+  private encodingDebugSamples: Array<{ raw: string; decoded: string; method: string }> = [];
 
   /**
    * Парсит файл отчёта Ozon
@@ -253,6 +255,11 @@ export class FileParser {
 
     // Нормализуем и сортируем строки
     const chargeRows = this.normalizeAndSort(rawRows);
+
+    // В production logger.debug скрыт (minLevel=warn), поэтому печатаем примеры в консоль сервера
+    if (this.encodingDebugSamples.length > 0) {
+      console.log("[EncodingDebug] samples:", this.encodingDebugSamples.slice(0, 20));
+    }
 
     return {
       chargeRows,
@@ -403,6 +410,18 @@ export class FileParser {
       candidates.push({ decoded: win1251Decoded, method: "Windows-1251" });
     }
     
+    // Метод 2.1: авто-определение кодировки по байтам (jschardet) + iconv-lite
+    const detectedDecoded = this.decodeWithChardet(str);
+    if (detectedDecoded !== str && /[а-яА-ЯёЁ]/.test(detectedDecoded)) {
+      candidates.push({ decoded: detectedDecoded, method: "jschardet" });
+    }
+
+    // Метод 2.2: перебор “русских” однобайтовых кодировок (если строка была прочитана как latin1)
+    const multiDecoded = this.decodeWithRussianEncodings(str);
+    if (multiDecoded !== str && /[а-яА-ЯёЁ]/.test(multiDecoded)) {
+      candidates.push({ decoded: multiDecoded, method: "win1251/cp866/koi8-r/iso-8859-5" });
+    }
+
     // Метод 3: KOI-7 декодирование (для обратной совместимости)
     const koi7Decoded = fixEncoding(str);
     if (koi7Decoded !== str && /[а-яА-ЯёЁ]/.test(koi7Decoded)) {
@@ -424,12 +443,88 @@ export class FileParser {
           method: best.method,
         });
       }
+
+      // Сохраняем несколько примеров для Vercel-логов (только подозрительные KOI-7 строки)
+      const looksKoi7 =
+        /[\x10-\x1F]/.test(str) || /[0-9@A-O:;<=>?]/.test(str);
+      if (looksKoi7 && best.decoded !== str && this.encodingDebugSamples.length < 20) {
+        this.encodingDebugSamples.push({
+          raw: str.substring(0, 120),
+          decoded: best.decoded.substring(0, 120),
+          method: best.method,
+        });
+      }
       
       return best.decoded;
     }
     
     // Если ничего не помогло, возвращаем оригинал
     return str;
+  }
+
+  private decodeWithChardet(str: string): string {
+    // jschardet работает по байтам, поэтому восстанавливаем байты как latin1
+    try {
+      const buf = Buffer.from(str, "latin1");
+      const detected = jschardet.detect(buf);
+      const enc = (detected.encoding || "").toLowerCase();
+
+      // маппинг в названия iconv-lite
+      const map: Record<string, string> = {
+        windows1251: "win1251",
+        win1251: "win1251",
+        cp1251: "win1251",
+        ibm866: "cp866",
+        cp866: "cp866",
+        koi8r: "koi8-r",
+        "koi8-r": "koi8-r",
+        iso88595: "iso-8859-5",
+        "iso-8859-5": "iso-8859-5",
+      };
+
+      const iconvEnc = map[enc];
+      if (!iconvEnc) return str;
+
+      const decoded = iconv.decode(buf, iconvEnc);
+      if (decoded && decoded !== str && /[а-яА-ЯёЁ]/.test(decoded)) {
+        logger.debug("ChardetDecoder", "Detected encoding", {
+          encoding: detected.encoding,
+          confidence: detected.confidence,
+          sampleOriginal: str.substring(0, 40),
+          sampleDecoded: decoded.substring(0, 40),
+        });
+        return decoded;
+      }
+    } catch (e) {
+      // ignore
+    }
+    return str;
+  }
+
+  private decodeWithRussianEncodings(str: string): string {
+    try {
+      const buf = Buffer.from(str, "latin1");
+      const encs = ["win1251", "cp866", "koi8-r", "iso-8859-5"] as const;
+      let best = str;
+      let bestScore = 0;
+
+      for (const enc of encs) {
+        try {
+          const decoded = iconv.decode(buf, enc);
+          const score = (decoded.match(/[а-яА-ЯёЁ]/g) || []).length;
+          if (score > bestScore) {
+            bestScore = score;
+            best = decoded;
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      return bestScore > 0 ? best : str;
+    } catch (e) {
+      return str;
+    }
   }
   
   /**
