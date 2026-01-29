@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
       if (totalSize > MAX_FILE_SIZE) {
         const totalSizeMB = (totalSize / 1024 / 1024).toFixed(2);
         return NextResponse.json(
-          { error: "Общий размер файлов слишком большой", message: `Общий размер всех файлов (${totalSizeMB} MB) превышает максимальный размер 15 MB` },
+          { error: "Общий размер файлов слишком большой", message: `Общий размер всех файлов (${totalSizeMB} MB) превышает максимальный размер 20 MB` },
           { status: 400 }
         );
       }
@@ -1040,7 +1040,7 @@ function recalculateOrderStatusForMerged(order: any): OrderStatus {
   return "completed";
 }
 
-// Конфигурация для увеличения лимита размера тела запроса до 15 MB
+// Конфигурация для увеличения лимита размера тела запроса до 20 MB
 // Next.js App Router использует maxDuration вместо bodyParser config
 // Размер тела запроса контролируется через vercel.json или runtime config
 export const maxDuration = 300; // 5 минут
