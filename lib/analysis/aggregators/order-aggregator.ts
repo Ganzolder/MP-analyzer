@@ -413,7 +413,7 @@ export class OrderAggregator {
       grossRevenue: round(grossRevenue),
       commissionAmount: round(Math.abs(commissionAmount)),
       logisticsAmount: round(Math.abs(logisticsAmount)),
-      acquiringAmount: round(Math.abs(acquiringAmount)),
+      acquiringAmount: round(acquiringAmount), // Сохраняем знак для эквайринга (может быть отрицательным при возвратах)
       returnAmount: round(Math.abs(returnLogisticsAmount)),
       otherFeesAmount: round(Math.abs(otherAmount < 0 ? otherAmount : 0)),
       totalFees: round(totalFees),
