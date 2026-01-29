@@ -472,7 +472,7 @@ export default function AnalysisPage() {
                   
                   {/* Товары с себестоимостью */}
                   <ProductsWithCostTable
-                    products={(data.costReports.productsWithCost || []).map((p: any) => ({
+                    products={Array.isArray(data.costReports?.productsWithCost) ? data.costReports.productsWithCost.map((p: any) => ({
                       article: p.article,
                       sku: p.sku,
                       name: p.name || p.productName || `Товар ${p.sku || p.article || "N/A"}`,
@@ -482,14 +482,14 @@ export default function AnalysisPage() {
                       revenue: p.revenue ?? p.totalRevenue,
                       netProfit: p.netProfit,
                       profitMargin: p.profitMargin ?? p.profitMarginPercent ?? p.marginPercent,
-                    }))}
+                    })) : []}
                     title="Товары с себестоимостью"
                   />
                   
                   {/* Товары без себестоимости */}
-                  {data.costReports.productsWithoutCost.length > 0 && (
+                  {data.costReports?.productsWithoutCost && Array.isArray(data.costReports.productsWithoutCost) && data.costReports.productsWithoutCost.length > 0 && (
                     <ProductsWithoutCostTable
-                      products={(data.costReports.productsWithoutCost || []).map((p: any) => ({
+                      products={data.costReports.productsWithoutCost.map((p: any) => ({
                         article: p.article,
                         sku: p.sku,
                         name: p.name || p.productName || `Товар ${p.sku || p.article || "N/A"}`,
@@ -538,7 +538,7 @@ export default function AnalysisPage() {
                                     </td>
                                   </tr>
                                 ) : (
-                                  data.costReports.ordersWithCost.slice(0, 100).map((order: any, index: number) => (
+                                  (Array.isArray(data.costReports?.ordersWithCost) ? data.costReports.ordersWithCost : []).slice(0, 100).map((order: any, index: number) => (
                                     <tr key={index} className="border-b last:border-0 hover:bg-muted/30">
                                       <td className="py-3 px-2 font-mono text-xs">{order.orderNumber}</td>
                                       <td className="py-3 px-2 max-w-[200px] truncate">{order.productName}</td>
@@ -587,7 +587,7 @@ export default function AnalysisPage() {
                               </tr>
                             </thead>
                             <tbody>
-                              {data.costReports.ordersWithoutCost.slice(0, 100).map((order: any, index: number) => (
+                              {(Array.isArray(data.costReports?.ordersWithoutCost) ? data.costReports.ordersWithoutCost : []).slice(0, 100).map((order: any, index: number) => (
                                 <tr key={index} className="border-b last:border-0 hover:bg-muted/30">
                                   <td className="py-3 px-2 font-mono text-xs">{order.orderNumber}</td>
                                   <td className="py-3 px-2 font-mono text-xs">{order.article || order.sku || "-"}</td>

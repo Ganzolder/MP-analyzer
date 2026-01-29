@@ -126,11 +126,21 @@ export function recalculateWithExclusions(
 
   const result: FrontendAnalysisResult = {
     ...originalData,
-    topProducts: filteredProducts,
-    orders: filteredOrders,
+    topProducts: filteredProducts || [],
+    orders: filteredOrders || [],
     summary: recalculatedSummary,
-    dailyMetrics: recalculatedDailyMetrics,
-    profitTrends: recalculatedProfitTrends,
+    dailyMetrics: recalculatedDailyMetrics || [],
+    profitTrends: recalculatedProfitTrends || [],
+    // Убеждаемся, что все массивы инициализированы
+    worstProducts: (originalData.worstProducts || []).filter(
+      (p) => !excludedSet.has(p.sku)
+    ),
+    returnedOrders: (originalData.returnedOrders || []).filter(
+      (order) => !excludedSet.has(order.sku)
+    ),
+    topOrders: (originalData.topOrders || []).filter(
+      (order) => !excludedSet.has(order.sku)
+    ),
   };
 
   // Добавляем опциональные поля только если они есть

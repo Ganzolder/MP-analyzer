@@ -49,6 +49,9 @@ export function AllProductsTable({ products, orders = [], analysisId, summary, o
 
   // Поиск и фильтрация
   const filteredProducts = useMemo(() => {
+    if (!Array.isArray(products)) {
+      return [];
+    }
     let filtered = [...products];
 
     // Поиск по названию, SKU, артикулу
