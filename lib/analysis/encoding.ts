@@ -93,6 +93,36 @@ export function fixEncoding(str: string): string {
   }
   
   let result = "";
+  // Если строка явно содержит KOI-7 маркеры (управляющие символы / типичный набор @:;<>? и т.п.),
+  // то цифры внутри "слов" — это тоже буквы (0-9 -> а-й). Но реальные числа (например "87-70", "2025")
+  // надо сохранить как числа.
+  const hasKoi7Markers =
+    /[\x10-\x1F]/.test(fixedStr) || /[@A-OG-Z:<=>?]/.test(fixedStr);
+
+  const isNumericTokenChar = (ch: string) => /[0-9.,-]/.test(ch);
+  const isWordBoundary = (ch: string) => ch === "" || ch === " " || ch === "\n" || ch === "\t";
+
+  const isProbablyRealNumberAt = (s: string, idx: number) => {
+    // Определяем "токен" вокруг idx (цифры/разделители)
+    let l = idx;
+    while (l > 0 && isNumericTokenChar(s[l - 1])) l--;
+    let r = idx;
+    while (r + 1 < s.length && isNumericTokenChar(s[r + 1])) r++;
+    const token = s.slice(l, r + 1);
+
+    // Если токен окружен границами слова — скорее всего это реальное число
+    const left = l > 0 ? s[l - 1] : "";
+    const right = r + 1 < s.length ? s[r + 1] : "";
+    const bounded = isWordBoundary(left) && isWordBoundary(right);
+    if (!bounded) return false;
+
+    // Типичные числовые формы
+    if (/^\d+([.,]\d+)?$/.test(token)) return true;          // 123 или 123.45
+    if (/^\d{1,6}(-\d{1,6})+$/.test(token)) return true;     // 87-70, 2025-01
+    if (/^\d{2,4}$/.test(token)) return true;                // 25, 2025
+    return false;
+  };
+
   for (let i = 0; i < fixedStr.length; i++) {
     const char = fixedStr[i];
     const prevChar = i > 0 ? fixedStr[i - 1] : " ";
@@ -101,7 +131,15 @@ export function fixEncoding(str: string): string {
     // ЦИФРЫ и ЛАТИНСКИЕ БУКВЫ НЕ декодируем - они уже в правильной кодировке
     // Но проверяем, не является ли это частью кириллического слова
     if (/[0-9]/.test(char)) {
-      result += char;
+      // В KOI-7 цифры 0-9 = а-й. Декодируем только если:
+      // - строка похожа на KOI-7 (есть маркеры)
+      // - и эта цифра не является частью "реального" числового токена (например "87-70")
+      if (hasKoi7Markers && !isProbablyRealNumberAt(fixedStr, i)) {
+        const decoded = ASCII_TO_CYRILLIC[char];
+        result += decoded !== undefined ? decoded : char;
+      } else {
+        result += char;
+      }
     } else if (/[a-zA-Z]/.test(char) && char.charCodeAt(0) < 128) {
       // Латиница - оставляем как есть
       result += char;

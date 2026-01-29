@@ -352,7 +352,9 @@ export class FileParser {
       chargeDate: parseDate(row["Дата начисления"]),
       serviceGroup: this.getDecodedString(row["Группа услуг"], this.wasConverted),
       chargeType,
-      article: this.getDecodedString(row["Артикул"], this.wasConverted),
+      // Артикул — это идентификатор (часто цифры/латиница). Его НЕ нужно прогонять через KOI-7 декодер,
+      // иначе цифры в KOI-7 могут ошибочно превратиться в кириллицу.
+      article: getString(row["Артикул"]),
       sku: getString(row["SKU"]),
       productName: this.getDecodedString(row["Название товара"], this.wasConverted),
       quantity: getNumber(row["Количество"]),
