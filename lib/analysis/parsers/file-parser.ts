@@ -8,12 +8,12 @@ import * as iconv from "iconv-lite";
 // https://github.com/SheetJS/js-codepage
 import * as cptable from "codepage";
 import jschardet from "jschardet";
-import { convertXlsxToXls } from "../converter";
 import { logger } from "@/lib/utils/logger";
 import { fixEncoding } from "../encoding";
 import { extractOrderNumber } from "../constants";
 import { getString, getNumber, parseDate } from "../data-utils";
 import type { RawRow, ChargeRow } from "../types";
+import { parseXlsxToAOA } from "./xlsx-raw-parser";
 
 /**
  * Декодирует строку из UTF-16LE (если она была неправильно прочитана)
@@ -165,50 +165,54 @@ export class FileParser {
       buffer = arrayBuffer;
     }
 
-    // Конвертируем XLSX -> XLS с декодированием KOI-7 (если файл XLSX)
-    let convertedBuffer: ArrayBuffer = buffer;
-    if (fileName.toLowerCase().endsWith('.xlsx')) {
-      try {
-        const bufferForConvert = Buffer.from(buffer);
-        const convertedXls = await convertXlsxToXls(bufferForConvert);
-        const newArrayBuffer = new ArrayBuffer(convertedXls.length);
-        const view = new Uint8Array(newArrayBuffer);
-        view.set(convertedXls);
-        convertedBuffer = newArrayBuffer;
-        this.wasConverted = true;
-        logger.fileConverted(buffer.byteLength, convertedXls.length);
-      } catch (error) {
-        logger.warn("Converter", "Конвертация не удалась, используем оригинальный файл", error);
-        this.wasConverted = false;
-      }
-    } else {
+    const isXlsx = fileName.toLowerCase().endsWith(".xlsx");
+    const isXls = fileName.toLowerCase().endsWith(".xls");
+
+    let rawData: any[][] = [];
+    let periodLabelFromA1 = "";
+
+    if (isXlsx) {
+      // Полностью уходим от SheetJS для чтения таблицы .xlsx:
+      // читаем как ZIP + XML (sharedStrings + sheet1) и получаем AOA.
       this.wasConverted = false;
-      logger.info("Converter", "Файл .xls - пропускаем конвертацию");
+      const buf = Buffer.from(buffer);
+      const parsed = await parseXlsxToAOA(buf);
+      rawData = parsed.rows;
+      periodLabelFromA1 = rawData?.[0]?.[0] ? String(rawData[0][0]) : "";
+      // Диагностика (включается только при необходимости)
+      if (process.env.DEBUG_XLSX_RAW === "1") {
+        console.log("[XlsxRaw]", {
+          fileName,
+          rows: rawData?.length || 0,
+          row0: Array.isArray(rawData?.[0]) ? rawData[0].slice(0, 8) : null,
+          row1: Array.isArray(rawData?.[1]) ? rawData[1].slice(0, 8) : null,
+          hasSharedStrings: parsed.hasSharedStrings,
+          sharedStringsCount: parsed.sharedStringsCount,
+        });
+      }
+    } else if (isXls) {
+      // .xls оставляем через SheetJS (BIFF), тут реально могут помочь codepage/cptable.
+      this.wasConverted = false;
+      (XLSX as any).set_cptable?.(cptable);
+      const workbook = XLSX.read(buffer, {
+        type: "array",
+        cellDates: true,
+        codepage: 1251,
+      });
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      periodLabelFromA1 = worksheet["A1"]?.v ? String(worksheet["A1"].v) : "";
+      rawData = XLSX.utils.sheet_to_json<any[]>(worksheet, {
+        header: 1,
+        raw: true,
+        defval: "",
+      });
+    } else {
+      throw new Error("Unsupported file type");
     }
 
-    // Читаем файл
-    // ВАЖНО: подключаем таблицы кодировок для SheetJS (BIFF .xls и некоторые edge cases)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (XLSX as any).set_cptable?.(cptable);
-    // Пробуем разные кодировки: сначала 1251 (Windows-1251), потом 65001 (UTF-8)
-    const workbook = XLSX.read(convertedBuffer, {
-      type: "array",
-      cellDates: true,
-      codepage: 1251, // Windows-1251 для кириллицы
-    });
-
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-
-    // Извлекаем период из A1
-    const period = this.extractPeriod(worksheet);
-
-    // Читаем данные
-    const rawData = XLSX.utils.sheet_to_json<any[]>(worksheet, {
-      header: 1,
-      raw: true,
-      defval: "",
-    });
+    // Извлекаем период из A1 (строка вида DD.MM.YYYY-DD.MM.YYYY)
+    const period = this.extractPeriodFromLabel(periodLabelFromA1);
 
     // Определяем строку с заголовками
     const headerRowIndex = this.findHeaderRow(rawData);
@@ -270,18 +274,19 @@ export class FileParser {
     };
   }
 
-  private extractPeriod(worksheet: XLSX.WorkSheet): {
+  private extractPeriodFromLabel(labelRaw: string): {
     start: Date;
     end: Date;
     label: string;
   } {
-    const cellA1 = worksheet["A1"];
     let label = "";
     let start = new Date();
     let end = new Date();
 
-    if (cellA1 && cellA1.v) {
-      const value = String(cellA1.v);
+    if (labelRaw) {
+      // A1 может быть закодирован (KOI-7) — декодируем, чтобы label был читаемым,
+      // но даты извлекаем regex-ом, он сработает и на недекодированном.
+      const value = fixEncoding(String(labelRaw));
       label = value;
 
       const match = value.match(/(\d{2})\.(\d{2})\.(\d{4})-(\d{2})\.(\d{2})\.(\d{4})/);
@@ -299,7 +304,11 @@ export class FileParser {
     for (let i = 0; i < Math.min(5, rawData.length); i++) {
       const row = rawData[i];
       if (row && Array.isArray(row)) {
-        const rowStr = row.map(c => String(c || "").toLowerCase()).join(" ");
+        // В некоторых XLSX заголовки приходят как KOI-7 “псевдотекст”.
+        // Декодируем перед поиском, иначе headerRowIndex не найдётся и rawRows будут пустыми.
+        const rowStr = row
+          .map(c => fixEncoding(String(c || "")).toLowerCase())
+          .join(" ");
         if (rowStr.includes("id") && (rowStr.includes("начислен") || rowStr.includes("сумма"))) {
           return i;
         }
@@ -310,7 +319,8 @@ export class FileParser {
 
   private findColumnPositions(headerRow: any[]): Record<string, number> {
     const positions: Record<string, number> = {};
-    const headerStr = headerRow.map(c => String(c || "").toLowerCase());
+    // Декодируем заголовки (KOI-7), иначе не найдём колонки по includes("назван") и т.п.
+    const headerStr = headerRow.map(c => fixEncoding(String(c || "")).toLowerCase());
 
     positions.chargeId = headerStr.findIndex(h => h.includes("id") && h.includes("начислен"));
     positions.chargeDate = headerStr.findIndex(h => h.includes("дата") && h.includes("начислен"));

@@ -100,8 +100,11 @@ export function fixEncoding(str: string): string {
 
   const flushToken = () => {
     if (!token) return;
-    const hasKoi = token.split("").some(isKoi7Char) || /[\x10-\x1F]/.test(token);
-    if (hasKoi && !looksLikeRealNumberToken(token)) {
+    // ВАЖНО: латиница A-O/@ и т.п. пересекается с KOI-7 и может давать ложные срабатывания
+    // (например "Ozon" превращался в "яzon"). Поэтому декодируем только если есть "сильные"
+    // KOI-7 маркеры: управляющие символы, цифры или спец-символы KOI-7 (:;<=>?@Q и т.п.).
+    const hasStrongKoiMarkers = /[\x10-\x1F0-9@:;<=>?Q!"#$%&'()*+,\-./]/.test(token);
+    if (hasStrongKoiMarkers && !looksLikeRealNumberToken(token)) {
       out += decodeKoi7Token(token);
     } else {
       out += token;
