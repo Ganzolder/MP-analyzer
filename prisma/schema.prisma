@@ -1,0 +1,180 @@
+// Prisma Schema для Ozon Analyzer
+// SQLite для MVP, легко мигрировать на PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Пользователь (для NextAuth)
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  
+  // Связи
+  accounts      Account[]
+  sessions      Session[]
+  reports       Report[]
+  costData      CostData[]
+  subscription  Subscription?
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+// NextAuth Account
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+// NextAuth Session
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// NextAuth VerificationToken
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// Отчёт анализа
+model Report {
+  id              String   @id @default(cuid())
+  userId          String?  // Опционально для MVP (анонимные пользователи)
+  user            User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  // Информация о файле
+  fileName        String
+  fileSize        Int
+  filePath        String
+  
+  // Параметры анализа
+  customPrompt    String?
+  
+  // Статус обработки
+  status          String   @default("pending") // pending, processing, completed, failed
+  progress        Int      @default(0)
+  currentStep     String?
+  errorMessage    String?
+  
+  // Результаты анализа (JSON)
+  analysisResults String?  // JSON строка с полным результатом
+  aiInsights      String?  // JSON строка с AI рекомендациями
+  
+  // Метаданные
+  periodStart     DateTime?
+  periodEnd       DateTime?
+  totalOrders     Int?
+  totalRevenue    Float?
+  netProfit       Float?
+  
+  // Настройки (для будущего)
+  settings        String?  // JSON
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// Данные о себестоимости товаров (для будущего функционала)
+model CostData {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  sku       String
+  name      String?
+  cost      Float
+  currency  String   @default("RUB")
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@unique([userId, sku])
+  @@index([userId])
+  @@index([sku])
+}
+
+// Подписка пользователя (заготовка)
+model Subscription {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Тарифный план
+  plan              String   @default("free") // free, basic, pro
+  status            String   @default("active") // active, cancelled, expired
+  
+  // Лимиты
+  reportsUsed       Int      @default(0)
+  reportsLimit      Int      @default(3)
+  
+  // Платёжные данные (для Stripe)
+  stripeCustomerId  String?
+  stripeSubscriptionId String?
+  stripePriceId     String?
+  
+  // Период подписки
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  cancelAtPeriodEnd  Boolean @default(false)
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// Логи использования AI (для аналитики)
+model AIUsageLog {
+  id          String   @id @default(cuid())
+  reportId    String?
+  userId      String?
+  
+  provider    String   // openai, anthropic, etc
+  model       String
+  
+  promptTokens    Int
+  completionTokens Int
+  totalTokens     Int
+  
+  latencyMs   Int
+  success     Boolean
+  errorMessage String?
+  
+  createdAt   DateTime @default(now())
+  
+  @@index([userId])
+  @@index([createdAt])
+}
