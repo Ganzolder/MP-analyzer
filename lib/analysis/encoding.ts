@@ -80,6 +80,21 @@ export function fixEncoding(str: string): string {
     fixedStr = fixedStr.replace("яzon", "Ozon");
   }
   
+  // Исправляем известные паттерны KOI-7, где управляющие символы теряются
+  // "K@CG:0" → "Выручка" (K должен быть заглавной В, но управляющий символ \x12 теряется)
+  if (fixedStr === "K@CG:0" || fixedStr.startsWith("K@CG:0")) {
+    fixedStr = fixedStr.replace(/^K@CG:0/, "Выручка");
+  }
+  // Также проверяем случаи, когда может быть "K@CG:0" в середине или конце
+  if (fixedStr.includes("K@CG:0") && !fixedStr.includes("Выручка")) {
+    fixedStr = fixedStr.replace(/K@CG:0/g, "Выручка");
+  }
+  
+  // Исправляем ">72@0B 2K@CG:8" → "Возврат выручки"
+  if (fixedStr.includes(">72@0B 2K@CG:8")) {
+    fixedStr = fixedStr.replace(/>72@0B 2K@CG:8/g, "Возврат выручки");
+  }
+  
   let result = "";
   for (let i = 0; i < fixedStr.length; i++) {
     const char = fixedStr[i];
