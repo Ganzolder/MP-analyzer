@@ -182,10 +182,11 @@ export class FileParser {
     }
 
     // Читаем файл
+    // Пробуем разные кодировки: сначала 1251 (Windows-1251), потом 65001 (UTF-8)
     const workbook = XLSX.read(convertedBuffer, {
       type: "array",
       cellDates: true,
-      codepage: 1251,
+      codepage: 1251, // Windows-1251 для кириллицы
     });
 
     const sheetName = workbook.SheetNames[0];
@@ -373,25 +374,102 @@ export class FileParser {
     if (value === null || value === undefined) return "";
     const str = getString(value);
     
-    // Шаг 1: Пытаемся декодировать UTF-16LE (если строка была неправильно прочитана)
-    let decoded = decodeUtf16LeString(str);
-    
-    // Шаг 2: Если UTF-16LE декодирование не помогло, применяем KOI-7 декодирование
-    // (для обратной совместимости с файлами, которые действительно используют KOI-7)
-    if (decoded === str) {
-      decoded = fixEncoding(str);
+    // Если строка пустая или уже содержит кириллицу, возвращаем как есть
+    if (!str || str.length === 0) return str;
+    if (/[а-яА-ЯёЁ]/.test(str)) {
+      return str; // Уже декодировано
     }
     
-    // Логируем только если декодирование изменило строку (для отладки)
-    if (decoded !== str && str.length > 0 && str.length < 100) {
-      logger.debug("Decoder", "Декодирование строки", {
-        original: str.substring(0, 50),
-        decoded: decoded.substring(0, 50),
-        wasConverted,
-        method: decoded !== decodeUtf16LeString(str) ? "UTF-16LE" : "KOI-7",
+    // Пробуем разные методы декодирования
+    const candidates: Array<{ decoded: string; method: string }> = [];
+    
+    // Метод 1: UTF-16LE декодирование
+    const utf16Decoded = decodeUtf16LeString(str);
+    if (utf16Decoded !== str && /[а-яА-ЯёЁ]/.test(utf16Decoded)) {
+      candidates.push({ decoded: utf16Decoded, method: "UTF-16LE" });
+    }
+    
+    // Метод 2: Windows-1251 декодирование (если строка выглядит как Windows-1251)
+    const win1251Decoded = this.decodeWindows1251(str);
+    if (win1251Decoded !== str && /[а-яА-ЯёЁ]/.test(win1251Decoded)) {
+      candidates.push({ decoded: win1251Decoded, method: "Windows-1251" });
+    }
+    
+    // Метод 3: KOI-7 декодирование (для обратной совместимости)
+    const koi7Decoded = fixEncoding(str);
+    if (koi7Decoded !== str && /[а-яА-ЯёЁ]/.test(koi7Decoded)) {
+      candidates.push({ decoded: koi7Decoded, method: "KOI-7" });
+    }
+    
+    // Выбираем лучший результат (с наибольшим количеством кириллицы)
+    if (candidates.length > 0) {
+      const best = candidates.reduce((best, current) => {
+        const bestCyrillicCount = (best.decoded.match(/[а-яА-ЯёЁ]/g) || []).length;
+        const currentCyrillicCount = (current.decoded.match(/[а-яА-ЯёЁ]/g) || []).length;
+        return currentCyrillicCount > bestCyrillicCount ? current : best;
+      });
+      
+      if (str.length < 100) {
+        logger.debug("Decoder", "Декодирование строки", {
+          original: str.substring(0, 50),
+          decoded: best.decoded.substring(0, 50),
+          method: best.method,
+        });
+      }
+      
+      return best.decoded;
+    }
+    
+    // Если ничего не помогло, возвращаем оригинал
+    return str;
+  }
+  
+  /**
+   * Декодирует строку из Windows-1251 (если она была прочитана как однобайтовая)
+   * 
+   * Проблема: Excel файлы могут содержать строки в Windows-1251, которые при чтении через XLSX
+   * интерпретируются как однобайтовая строка, что даёт результат типа "1@01>B:0" вместо "Начисление"
+   */
+  private decodeWindows1251(value: any): string {
+    if (value === null || value === undefined) return "";
+    const str = String(value);
+    
+    if (!str || str.length === 0) return str;
+    
+    // Проверяем признаки Windows-1251:
+    // Строка содержит символы в диапазоне 0x20-0xFF, но не содержит кириллицу
+    // И содержит паттерны, похожие на кириллицу в Windows-1251
+    const hasWin1251Pattern = 
+      /[!-~]/.test(str) && // Содержит printable ASCII
+      !/[а-яА-ЯёЁ]/.test(str) && // Но не содержит кириллицу
+      str.length > 2; // И достаточно длинная
+    
+    if (!hasWin1251Pattern) {
+      return str;
+    }
+    
+    try {
+      // Преобразуем строку в Buffer, предполагая что она была прочитана как latin1
+      // Затем декодируем как Windows-1251
+      const buffer = Buffer.from(str, 'latin1');
+      const decoded = iconv.decode(buffer, 'win1251');
+      
+      // Если декодирование дало осмысленный результат (содержит кириллицу), используем его
+      if (decoded !== str && decoded.length > 0 && /[а-яА-ЯёЁ]/.test(decoded)) {
+        logger.debug("Win1251Decoder", "Декодирована Windows-1251 строка", {
+          original: str.substring(0, 30),
+          decoded: decoded.substring(0, 50),
+        });
+        return decoded;
+      }
+    } catch (error) {
+      // Если декодирование не удалось, возвращаем оригинал
+      logger.debug("Win1251Decoder", "Не удалось декодировать как Windows-1251", { 
+        str: str.substring(0, 30),
+        error: error instanceof Error ? error.message : String(error),
       });
     }
     
-    return decoded;
+    return str;
   }
 }
