@@ -11,8 +11,8 @@ import type { AggregatedOrder, OrderStatus } from "@/lib/analysis/types";
 // Путь к демо-файлу
 const DEMO_FILE_PATH = path.join(process.cwd(), "test", "Отчет по начислениям_01.10.2025-31.10.2025 (2).xlsx");
 
-// Максимальный размер файла (15 MB)
-const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15 MB
+// Максимальный размер файла (12 MB для Vercel Pro)
+const MAX_FILE_SIZE = 12 * 1024 * 1024; // 12 MB
 
 /**
  * POST /api/analyze
@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
         // Проверка размера каждого файла
         if (file.size > MAX_FILE_SIZE) {
           return NextResponse.json(
-            { error: "Файл слишком большой", message: `Файл "${file.name}" превышает максимальный размер 15 MB` },
+            { error: "Файл слишком большой", message: `Файл "${file.name}" превышает максимальный размер 12 MB` },
             { status: 400 }
           );
         }
@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
       if (costFile) {
         if (costFile.size > MAX_FILE_SIZE) {
           return NextResponse.json(
-            { error: "Файл себестоимости слишком большой", message: `Файл "${costFile.name}" превышает максимальный размер 15 MB` },
+            { error: "Файл себестоимости слишком большой", message: `Файл "${costFile.name}" превышает максимальный размер 12 MB` },
             { status: 400 }
           );
         }
@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
       if (totalSize > MAX_FILE_SIZE) {
         const totalSizeMB = (totalSize / 1024 / 1024).toFixed(2);
         return NextResponse.json(
-          { error: "Общий размер файлов слишком большой", message: `Общий размер всех файлов (${totalSizeMB} MB) превышает максимальный размер 15 MB` },
+          { error: "Общий размер файлов слишком большой", message: `Общий размер всех файлов (${totalSizeMB} MB) превышает максимальный размер 12 MB` },
           { status: 400 }
         );
       }
