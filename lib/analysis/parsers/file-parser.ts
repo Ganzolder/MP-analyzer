@@ -276,9 +276,21 @@ export class FileParser {
   private getDecodedString(value: any, wasConverted: boolean): string {
     if (value === null || value === undefined) return "";
     const str = getString(value);
-    if (wasConverted) {
-      return str;
+    
+    // ВАЖНО: Всегда применяем декодирование, даже если конвертация была
+    // потому что на Vercel Python может не работать, и конвертация может не произойти
+    // или данные могут быть не полностью декодированы
+    const decoded = fixEncoding(str);
+    
+    // Логируем только если декодирование изменило строку (для отладки)
+    if (decoded !== str && str.length > 0 && str.length < 100) {
+      logger.debug("Decoder", "Декодирование строки", {
+        original: str.substring(0, 50),
+        decoded: decoded.substring(0, 50),
+        wasConverted,
+      });
     }
-    return fixEncoding(str);
+    
+    return decoded;
   }
 }

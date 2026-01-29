@@ -4,10 +4,10 @@
 
 /** Таблица соответствия: ASCII → кириллица (KOI-7 кодировка) */
 const ASCII_TO_CYRILLIC: Record<string, string> = {
-  // Строчные буквы
+  // Строчные буквы (0x60-0x7F)
   "0": "а", "1": "б", "2": "в", "3": "г", "4": "д", "5": "е", "6": "ж", "7": "з",
   "8": "и", "9": "й", ":": "к", ";": "л", "<": "м", "=": "н", ">": "о", "?": "п",
-  "@": "р", "A": "с", "B": "т", "C": "у", "E": "х", "F": "ц", "G": "ч",
+  "@": "р", "A": "с", "B": "т", "C": "у", "D": "ф", "E": "х", "F": "ц", "G": "ч",
   "H": "ш", "I": "щ", "J": "ъ", "K": "ы", "L": "ь", "M": "э", "N": "ю", "O": "я",
   
   // Заглавные буквы через управляющие символы (0x10-0x1F)
@@ -15,11 +15,15 @@ const ASCII_TO_CYRILLIC: Record<string, string> = {
   "\x16": "Ж", "\x17": "З", "\x18": "И", "\x19": "Й", "\x1a": "К", "\x1b": "Л",
   "\x1c": "М", "\x1d": "Н", "\x1e": "О", "\x1f": "П",
   
-  // Заглавные в printable range
-  "!": "Р", "\"": "Т", "#": "У", "$": "Ф", "%": "Х", "&": "Ц",
+  // Заглавные в printable range (0x20-0x5F)
+  "!": "Р", "\"": "С", "#": "Т", "$": "У", "%": "Ф", "&": "Х", "'": "Ц",
+  "(": "Ч", ")": "Ш", "*": "Щ", "+": "Ъ", ",": "Ы", "-": "Ь", ".": "Э", "/": "Ю",
   
-  // ё
+  // ё (строчная)
   "Q": "ё",
+  
+  // Дополнительные символы для заглавных (если встречаются)
+  "D": "ф", // Строчная ф (если встречается как заглавная)
 };
 
 /**
@@ -63,14 +67,31 @@ const PUNCTUATION_TO_PRESERVE = new Set([
 export function fixEncoding(str: string): string {
   if (!str || typeof str !== "string") return str;
   
+  // Исправляем известные случаи неправильного чтения
+  // "щD начисления" → "ID начисления", "SыU" → "SKU", "яzon" → "Ozon"
+  let fixedStr = str;
+  if (fixedStr.startsWith("щD")) {
+    fixedStr = fixedStr.replace("щD", "ID");
+  }
+  if (fixedStr.includes("SыU")) {
+    fixedStr = fixedStr.replace(/SыU/g, "SKU");
+  }
+  if (fixedStr.startsWith("яzon")) {
+    fixedStr = fixedStr.replace("яzon", "Ozon");
+  }
+  
   let result = "";
-  for (let i = 0; i < str.length; i++) {
-    const char = str[i];
-    const prevChar = i > 0 ? str[i - 1] : " ";
-    const nextChar = i + 1 < str.length ? str[i + 1] : " ";
+  for (let i = 0; i < fixedStr.length; i++) {
+    const char = fixedStr[i];
+    const prevChar = i > 0 ? fixedStr[i - 1] : " ";
+    const nextChar = i + 1 < fixedStr.length ? fixedStr[i + 1] : " ";
     
     // ЦИФРЫ и ЛАТИНСКИЕ БУКВЫ НЕ декодируем - они уже в правильной кодировке
-    if (/[0-9]/.test(char) || (/[a-zA-Z]/.test(char) && char.charCodeAt(0) < 128)) {
+    // Но проверяем, не является ли это частью кириллического слова
+    if (/[0-9]/.test(char)) {
+      result += char;
+    } else if (/[a-zA-Z]/.test(char) && char.charCodeAt(0) < 128) {
+      // Латиница - оставляем как есть
       result += char;
     } 
     // ЗНАКИ ПРЕПИНАНИЯ НЕ декодируем - они уже в правильной кодировке
@@ -90,7 +111,8 @@ export function fixEncoding(str: string): string {
       }
     } else {
       // Декодируем символ через таблицу или оставляем как есть
-      result += ASCII_TO_CYRILLIC[char] || char;
+      const decoded = ASCII_TO_CYRILLIC[char];
+      result += decoded !== undefined ? decoded : char;
     }
   }
   return result;
