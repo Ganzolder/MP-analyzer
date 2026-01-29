@@ -112,7 +112,17 @@ export class SummaryCalculator {
       if (charge.totalAmountRub < 0) {
         totalFees += Math.abs(charge.totalAmountRub);
       } else {
-        revenueAmount += charge.totalAmountRub;
+        // ВАЖНО: Добавляем к revenueAmount только те nonOrderCharges, которые действительно являются выручкой
+        // Проверяем тип начисления - если это "Выручка" или "Баллы за скидки", добавляем к соответствующему полю
+        const chargeType = (charge.chargeType || "").toLowerCase();
+        if (chargeType.includes("выручка") || chargeType.includes("k@cg:0")) {
+          revenueAmount += charge.totalAmountRub;
+        } else if (chargeType.includes("баллы") || chargeType.includes("0;;k")) {
+          pointsAmount += charge.totalAmountRub;
+        } else {
+          // Остальные положительные начисления (компенсации и т.д.) не считаем выручкой
+          // Они уже учтены в netPayout
+        }
       }
     }
 
