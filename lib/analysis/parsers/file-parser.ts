@@ -4,6 +4,9 @@
 
 import * as XLSX from "xlsx";
 import * as iconv from "iconv-lite";
+// SheetJS codepage tables (важно для корректного декодирования legacy codepages)
+// https://github.com/SheetJS/js-codepage
+import * as cptable from "codepage";
 import { convertXlsxToXls } from "../converter";
 import { logger } from "@/lib/utils/logger";
 import { fixEncoding } from "../encoding";
@@ -182,6 +185,9 @@ export class FileParser {
     }
 
     // Читаем файл
+    // ВАЖНО: подключаем таблицы кодировок для SheetJS (BIFF .xls и некоторые edge cases)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (XLSX as any).set_cptable?.(cptable);
     // Пробуем разные кодировки: сначала 1251 (Windows-1251), потом 65001 (UTF-8)
     const workbook = XLSX.read(convertedBuffer, {
       type: "array",
