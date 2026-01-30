@@ -501,53 +501,93 @@ export function AllProductsTable({ products, orders = [], analysisId, summary, o
 
               {/* Секция с исключёнными товарами */}
               {excludedSkus.size > 0 && (
-                <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
+                <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg space-y-3">
+                  <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium">Исключённые товары:</span>
                       <Badge variant="outline">{excludedSkus.size}</Badge>
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={async () => {
-                        if (!onRecalculate) {
-                          toast({
-                            title: "Ошибка",
-                            description: "Функция пересчёта не доступна",
-                            variant: "destructive",
-                          });
-                          return;
-                        }
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={async () => {
+                          if (!onRecalculate) {
+                            toast({
+                              title: "Ошибка",
+                              description: "Функция пересчёта не доступна",
+                              variant: "destructive",
+                            });
+                            return;
+                          }
 
-                        setIsReturning(true);
-                        try {
-                          // Сначала очищаем исключённые товары
-                          clearExcludedSkus();
-                          
-                          // Затем явно пересчитываем с пустым списком исключённых
-                          await onRecalculate([]);
-                          
-                          toast({
-                            title: "Товары возвращены в расчёт",
-                            description: "Все исключённые товары возвращены в расчёт и данные пересчитаны",
-                          });
-                        } catch (error: any) {
-                          toast({
-                            title: "Ошибка при возврате товаров",
-                            description: error.message || "Не удалось вернуть товары в расчёт",
-                            variant: "destructive",
-                          });
-                        } finally {
-                          setIsReturning(false);
-                        }
-                      }}
-                      disabled={isReturning}
-                      className="gap-2"
-                    >
-                      <RotateCcw className={cn("h-4 w-4", isReturning && "animate-spin")} />
-                      {isReturning ? "Возвращаем..." : "Вернуть все в расчёт"}
-                    </Button>
+                          setIsRecalculating(true);
+                          try {
+                            // Явно пересчитываем с текущими исключёнными товарами
+                            await onRecalculate(Array.from(excludedSkus));
+                            
+                            toast({
+                              title: "Пересчёт выполнен",
+                              description: `Данные пересчитаны с учётом ${excludedSkus.size} исключённых товаров`,
+                            });
+                          } catch (error: any) {
+                            toast({
+                              title: "Ошибка при пересчёте",
+                              description: error.message || "Не удалось пересчитать данные",
+                              variant: "destructive",
+                            });
+                          } finally {
+                            setIsRecalculating(false);
+                          }
+                        }}
+                        disabled={isRecalculating}
+                        className="gap-2"
+                      >
+                        <RotateCcw className={cn("h-4 w-4", isRecalculating && "animate-spin")} />
+                        {isRecalculating ? "Пересчитываем..." : "Пересчитать"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => {
+                          if (!onRecalculate) {
+                            toast({
+                              title: "Ошибка",
+                              description: "Функция пересчёта не доступна",
+                              variant: "destructive",
+                            });
+                            return;
+                          }
+
+                          setIsReturning(true);
+                          try {
+                            // Сначала очищаем исключённые товары
+                            clearExcludedSkus();
+                            
+                            // Затем явно пересчитываем с пустым списком исключённых
+                            await onRecalculate([]);
+                            
+                            toast({
+                              title: "Товары возвращены в расчёт",
+                              description: "Все исключённые товары возвращены в расчёт и данные пересчитаны",
+                            });
+                          } catch (error: any) {
+                            toast({
+                              title: "Ошибка при возврате товаров",
+                              description: error.message || "Не удалось вернуть товары в расчёт",
+                              variant: "destructive",
+                            });
+                          } finally {
+                            setIsReturning(false);
+                          }
+                        }}
+                        disabled={isReturning}
+                        className="gap-2"
+                      >
+                        <RotateCcw className={cn("h-4 w-4", isReturning && "animate-spin")} />
+                        {isReturning ? "Возвращаем..." : "Вернуть все в расчёт"}
+                      </Button>
+                    </div>
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {Array.from(excludedSkus).slice(0, 5).join(", ")}
