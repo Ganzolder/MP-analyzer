@@ -38,6 +38,7 @@ export function AllProductsTable({ products, orders = [], analysisId, summary, o
   const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
   const [selectedSkus, setSelectedSkus] = useState<Set<string>>(new Set());
   const [isRecalculating, setIsRecalculating] = useState(false);
+  const [isReturning, setIsReturning] = useState(false);
   const { toast } = useToast();
   const { excludedSkus, addExcludedSku, removeExcludedSku, clearExcludedSkus } = useExcludedProductsStore();
   
@@ -509,20 +510,43 @@ export function AllProductsTable({ products, orders = [], analysisId, summary, o
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => {
-                        clearExcludedSkus();
-                        if (onRecalculate) {
-                          onRecalculate([]);
+                      onClick={async () => {
+                        if (!onRecalculate) {
+                          toast({
+                            title: "Ошибка",
+                            description: "Функция пересчёта не доступна",
+                            variant: "destructive",
+                          });
+                          return;
                         }
-                        toast({
-                          title: "Товары возвращены в расчёт",
-                          description: "Все исключённые товары возвращены в расчёт",
-                        });
+
+                        setIsReturning(true);
+                        try {
+                          // Сначала очищаем исключённые товары
+                          clearExcludedSkus();
+                          
+                          // Затем явно пересчитываем с пустым списком исключённых
+                          await onRecalculate([]);
+                          
+                          toast({
+                            title: "Товары возвращены в расчёт",
+                            description: "Все исключённые товары возвращены в расчёт и данные пересчитаны",
+                          });
+                        } catch (error: any) {
+                          toast({
+                            title: "Ошибка при возврате товаров",
+                            description: error.message || "Не удалось вернуть товары в расчёт",
+                            variant: "destructive",
+                          });
+                        } finally {
+                          setIsReturning(false);
+                        }
                       }}
+                      disabled={isReturning}
                       className="gap-2"
                     >
-                      <RotateCcw className="h-4 w-4" />
-                      Вернуть все в расчёт
+                      <RotateCcw className={cn("h-4 w-4", isReturning && "animate-spin")} />
+                      {isReturning ? "Возвращаем..." : "Вернуть все в расчёт"}
                     </Button>
                   </div>
                   <div className="text-xs text-muted-foreground">
