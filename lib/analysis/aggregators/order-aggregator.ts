@@ -213,9 +213,10 @@ export class OrderAggregator {
           hasReturnType = true;
           break;
         case "returnRevenue":
-          // Возврат выручки должен уменьшать выручку (иначе невозможно корректно определить partial_return)
+          // Возврат выручки НЕ уменьшает валовую выручку (для ключевых метрик)
+          // Но сохраняем hasReturnType для определения статуса заказа
           hasReturnType = true;
-          revenueAmount += amount; // amount обычно отрицательный
+          // revenueAmount НЕ изменяем - убираем returnRevenue из расчёта валовой выручки
           // Суммируем количество из строк с типом "Возврат выручки" (для вычитания из итогового количества)
           if (row.quantity > 0) {
             returnRevenueQuantity += row.quantity;
@@ -382,11 +383,13 @@ export class OrderAggregator {
       // Если эквайринг один (acquiringCount === 1) => обычный заказ
       status = "completed";
     }
-    const totalFees = Math.abs(commissionAmount) +
-      Math.abs(logisticsAmount) +
-      Math.abs(returnLogisticsAmount) +
-      Math.abs(acquiringAmount) +
-      Math.abs(otherAmount < 0 ? otherAmount : 0);
+    // Удержания Ozon: считаем все строки с отрицательным значением
+    let totalFees = 0;
+    for (const row of rows) {
+      if (row.totalAmount < 0) {
+        totalFees += Math.abs(row.totalAmount);
+      }
+    }
 
     // Определяем заказы из прошлого периода: заказ создан до начала текущего периода
     // и есть начисления кроме эквайринга (не все начисления в текущем периоде)

@@ -53,6 +53,7 @@ export class SummaryCalculator {
     let returnedOrders = 0;
     let partialReturns = 0;
     let cancelledOrders = 0;
+    const processedOrders = new Set<string>(); // Для отслеживания уже учтённых заказов
 
     let totalCost = 0;
     let totalCostSold = 0;
@@ -66,6 +67,8 @@ export class SummaryCalculator {
     // ВАЖНО: Подсчёт уникальных заказов должен быть по эквайрингу
     // Заказ считается, если у него есть эквайринг (признак того, что человек что-то заказал)
     // Даже если потом был возврат, эквайринг поле будет, и заказ должен считаться
+    // Используем Set для подсчёта уникальных orderNumber
+    const uniqueOrderNumbers = new Set<string>();
     const ordersWithAcquiring = orders.filter(order => {
       // Проверяем наличие эквайринга: либо есть acquiringAmount > 0, либо есть типы начислений с эквайрингом
       const hasAcquiringAmount = (order.acquiringAmount || 0) > 0;
@@ -74,7 +77,11 @@ export class SummaryCalculator {
         const lowerType = ct.toLowerCase();
         return lowerType.includes("эквайринг") || lowerType.includes("-:209@8=3");
       });
-      return hasAcquiringAmount || hasAcquiringType;
+      const hasAcquiring = hasAcquiringAmount || hasAcquiringType;
+      if (hasAcquiring && order.orderNumber) {
+        uniqueOrderNumbers.add(order.orderNumber);
+      }
+      return hasAcquiring;
     });
 
     for (const order of orders) {
@@ -96,23 +103,28 @@ export class SummaryCalculator {
       }
 
       // Считаем статусы только для заказов с эквайрингом
+      // ВАЖНО: Считаем по уникальным orderNumber, чтобы не дублировать заказы с несколькими товарами
       const hasAcquiring = (order.acquiringAmount || 0) > 0 || 
         (order.chargeTypes && order.chargeTypes.some((ct: string) => {
           const lowerType = ct.toLowerCase();
           return lowerType.includes("эквайринг") || lowerType.includes("-:209@8=3");
         }));
       
-      if (hasAcquiring) {
-        if (order.status === "cancelled") {
-          cancelledOrders++;
-        } else if (order.status === "completed") {
-          completedOrders++;
-        } else if (order.status === "returned") {
-          returnedOrders++;
-        } else if (order.status === "partial_return") {
-          partialReturns++;
+      if (hasAcquiring && order.orderNumber && uniqueOrderNumbers.has(order.orderNumber)) {
+        // Используем Set для отслеживания уже учтённых заказов
+        if (!processedOrders.has(order.orderNumber)) {
+          processedOrders.add(order.orderNumber);
+          if (order.status === "cancelled") {
+            cancelledOrders++;
+          } else if (order.status === "completed") {
+            completedOrders++;
+          } else if (order.status === "returned") {
+            returnedOrders++;
+          } else if (order.status === "partial_return") {
+            partialReturns++;
+          }
+          // Статус "in_progress" не учитывается в статистике (заказы в работе)
         }
-        // Статус "in_progress" не учитывается в статистике (заказы в работе)
       }
 
       if (order.sku || order.article) {
@@ -136,9 +148,11 @@ export class SummaryCalculator {
         totalFees += Math.abs(charge.totalAmountRub);
       } else {
         // ВАЖНО: Добавляем к revenueAmount только те nonOrderCharges, которые действительно являются выручкой
-        // Проверяем тип начисления - если это "Выручка" или "Баллы за скидки", добавляем к соответствующему полю
+        // Проверяем тип начисления - если это "Выручка" (но НЕ "Возврат выручки") или "Баллы за скидки", добавляем к соответствующему полю
         const chargeType = (charge.chargeType || "").toLowerCase();
-        if (chargeType.includes("выручка") || chargeType.includes("k@cg:0")) {
+        // Исключаем "Возврат выручки" из расчёта валовой выручки
+        const isReturnRevenue = chargeType.includes("возврат выручки") || chargeType.includes(">72@0b 2k@cg:8");
+        if (!isReturnRevenue && (chargeType.includes("выручка") || chargeType.includes("k@cg:0"))) {
           revenueAmount += charge.totalAmountRub;
         } else if (chargeType.includes("баллы") || chargeType.includes("0;;k")) {
           pointsAmount += charge.totalAmountRub;
@@ -156,8 +170,9 @@ export class SummaryCalculator {
 
     const grossRevenue = revenueAmount + pointsAmount;
     const feesPercent = grossRevenue > 0 ? (totalFees / grossRevenue) * 100 : 0;
-    const returnRate = ordersWithAcquiring.length > 0
-      ? (returnedOrders / ordersWithAcquiring.length) * 100
+    const uniqueOrdersCount = uniqueOrderNumbers.size; // Количество уникальных заказов
+    const returnRate = uniqueOrdersCount > 0
+      ? (returnedOrders / uniqueOrdersCount) * 100
       : 0;
     const avgCommission = grossRevenue > 0 ? (commissionSum / grossRevenue) * 100 : 0;
     const totalNetProfit = totalCostSold > 0 ? netPayout - totalCostSold : undefined;
@@ -169,7 +184,7 @@ export class SummaryCalculator {
       ozonFees: round(totalFees),
       netPayout: round(netPayout),
       feesPercent: round(feesPercent, 1),
-      totalOrders: ordersWithAcquiring.length, // Считаем только заказы с эквайрингом
+      totalOrders: uniqueOrdersCount, // Считаем уникальные orderNumber среди заказов с эквайрингом
       completedOrders,
       returnedOrders,
       partialReturns,
