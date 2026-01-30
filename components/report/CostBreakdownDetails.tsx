@@ -81,11 +81,17 @@ export function CostBreakdownDetails({
 
   // Получаем уникальные группы (все начисления, включая выручку)
   const uniqueGroups = useMemo(() => {
+    if (!Array.isArray(chargeTypeBreakdown) || chargeTypeBreakdown.length === 0) {
+      return ["Все"];
+    }
     return ["Все", ...chargeTypeBreakdown.map((g) => g.groupName)];
   }, [chargeTypeBreakdown]);
 
   // Фильтрация и сортировка (все группы, включая выручку)
   const filteredGroups = useMemo(() => {
+    if (!Array.isArray(chargeTypeBreakdown) || chargeTypeBreakdown.length === 0) {
+      return [];
+    }
     let filtered = chargeTypeBreakdown;
 
     // Фильтр по группе
