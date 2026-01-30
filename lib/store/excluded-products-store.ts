@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 
 interface ExcludedProductsState {
   excludedSkus: Set<string>;
@@ -50,22 +50,16 @@ export const useExcludedProductsStore = create<ExcludedProductsState>()(
     }),
     {
       name: 'excluded-products-storage',
-      // Сериализация Set в массив для localStorage
-      serialize: (state) => JSON.stringify({
-        ...state,
-        state: {
-          ...state.state,
-          excludedSkus: setToArray(state.state.excludedSkus),
-        },
-      }),
-      deserialize: (str) => {
-        const parsed = JSON.parse(str);
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({
+        excludedSkus: setToArray(state.excludedSkus),
+      } as any),
+      merge: (persistedState: any, currentState) => {
         return {
-          ...parsed,
-          state: {
-            ...parsed.state,
-            excludedSkus: arrayToSet(parsed.state.excludedSkus || []),
-          },
+          ...currentState,
+          excludedSkus: Array.isArray(persistedState?.excludedSkus)
+            ? arrayToSet(persistedState.excludedSkus)
+            : currentState.excludedSkus,
         };
       },
     }
