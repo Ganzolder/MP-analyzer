@@ -65,6 +65,8 @@ export default function AnalysisPage() {
   const id = params.id as string;
   const { analysisResult: storedResult, setAnalysisResult } = useAnalysisStore();
   const [data, setData] = useState<FrontendAnalysisResult | null>(null);
+  // Сохраняем исходные данные для пересчёта
+  const [originalData, setOriginalData] = useState<FrontendAnalysisResult | null>(null);
   
   useEffect(() => {
     // Пытаемся получить данные из store или загружаем mock
@@ -74,6 +76,7 @@ export default function AnalysisPage() {
         profitTrends: storedResult.profitTrends?.length || 0,
       });
       setData(storedResult);
+      setOriginalData(storedResult); // Сохраняем исходные данные
     } else {
       // В реальности здесь будет API вызов
       const mockData = getMockAnalysisResult(id);
@@ -82,6 +85,7 @@ export default function AnalysisPage() {
         profitTrends: mockData.profitTrends?.length || 0,
       });
       setData(mockData);
+      setOriginalData(mockData); // Сохраняем исходные данные
       setAnalysisResult(mockData);
     }
   }, [id, storedResult, setAnalysisResult]);
@@ -354,7 +358,10 @@ export default function AnalysisPage() {
                 onRecalculate={async (excludedSkus) => {
                   // Импортируем утилиту для пересчёта
                   const { recalculateWithExclusions } = await import("@/lib/analysis/utils/recalculate-with-exclusions");
-                  const recalculated = recalculateWithExclusions(data, excludedSkus);
+                  // Используем исходные данные для пересчёта, а не уже отфильтрованные
+                  const sourceData = originalData || data;
+                  if (!sourceData) return;
+                  const recalculated = recalculateWithExclusions(sourceData, excludedSkus);
                   setData(recalculated);
                   setAnalysisResult(recalculated);
                 }}
@@ -501,7 +508,10 @@ export default function AnalysisPage() {
                       title="Товары без себестоимости"
                       onRecalculate={async (excludedSkus) => {
                         const { recalculateWithExclusions } = await import("@/lib/analysis/utils/recalculate-with-exclusions");
-                        const recalculated = recalculateWithExclusions(data, excludedSkus);
+                        // Используем исходные данные для пересчёта, а не уже отфильтрованные
+                        const sourceData = originalData || data;
+                        if (!sourceData) return;
+                        const recalculated = recalculateWithExclusions(sourceData, excludedSkus);
                         setData(recalculated);
                         setAnalysisResult(recalculated);
                       }}
