@@ -4,6 +4,8 @@
 
 import type { FrontendAnalysisResult, ProductData } from "@/lib/types/analysis";
 import type { AggregatedOrder } from "@/lib/analysis/types";
+import { getChargeGroup } from "../charge-type-groups";
+import { getChargeCategory } from "../constants";
 
 /**
  * Пересчитывает результаты анализа, исключая указанные артикулы (SKU)
@@ -118,11 +120,9 @@ export function recalculateWithExclusions(
     orders: dm.ordersCount || 0,
   }));
 
-  // 7. Пересчитываем chargeTypeBreakdown (если есть)
-  // Это сложнее, так как нужно пересчитать по типам начислений из отфильтрованных заказов
-  const recalculatedChargeTypeBreakdown = (originalData.chargeTypeBreakdown && Array.isArray(originalData.chargeTypeBreakdown) && originalData.chargeTypeBreakdown.length > 0)
-    ? recalculateChargeTypeBreakdown(filteredOrders, originalData.chargeTypeBreakdown)
-    : [];
+  // 7. Пересчитываем chargeTypeBreakdown на основе отфильтрованных заказов
+  // Используем виртуальные chargeRows для правильного пересчёта
+  const recalculatedChargeTypeBreakdown = recalculateChargeTypeBreakdown(filteredOrders);
 
   const result: FrontendAnalysisResult = {
     ...originalData,
@@ -155,60 +155,130 @@ export function recalculateWithExclusions(
 
 /**
  * Пересчитывает chargeTypeBreakdown на основе отфильтрованных заказов
+ * Создаёт виртуальные ChargeRow из данных заказов для правильного пересчёта
  */
 function recalculateChargeTypeBreakdown(
-  filteredOrders: AggregatedOrder[],
-  originalBreakdown: Array<{
-    groupName: string;
-    amount: number;
-    count: number;
-    chargeTypes: Array<{ name: string; amount: number; count: number }>;
-  }>
+  filteredOrders: AggregatedOrder[]
 ): Array<{
   groupName: string;
   amount: number;
   count: number;
   chargeTypes: Array<{ name: string; amount: number; count: number }>;
 }> {
-  // Используем исходный breakdown и фильтруем только те группы/типы, которые есть в отфильтрованных заказах
-  // Создаём Set уникальных chargeTypes из отфильтрованных заказов
-  const allowedChargeTypes = new Set<string>();
+
+  // Создаём виртуальные ChargeRow из отфильтрованных заказов
+  const virtualChargeRows: Array<{
+    chargeType: string;
+    totalAmount: number;
+  }> = [];
+
   for (const order of filteredOrders) {
-    if (order.chargeTypes && Array.isArray(order.chargeTypes)) {
-      for (const chargeType of order.chargeTypes) {
-        allowedChargeTypes.add(chargeType);
+    if (!order.chargeTypes || !Array.isArray(order.chargeTypes)) {
+      continue;
+    }
+
+    // Для каждого типа начисления в заказе создаём виртуальную строку
+    // Распределяем суммы из заказа по типам начислений
+    for (const chargeType of order.chargeTypes) {
+      let amount = 0;
+
+      // Определяем сумму начисления в зависимости от категории
+      const category = getChargeCategory(chargeType);
+      switch (category) {
+        case "revenue":
+          // Для выручки распределяем пропорционально количеству типов
+          amount = (order.revenueAmount || 0) / (order.chargeTypes.filter(ct => 
+            getChargeCategory(ct) === "revenue"
+          ).length || 1);
+          break;
+        case "points":
+          amount = (order.pointsAmount || 0) / (order.chargeTypes.filter(ct => 
+            getChargeCategory(ct) === "points"
+          ).length || 1);
+          break;
+        case "commission":
+          amount = (order.commissionAmount || 0) / (order.chargeTypes.filter(ct => 
+            getChargeCategory(ct) === "commission"
+          ).length || 1);
+          break;
+        case "logistics":
+          amount = (order.logisticsAmount || 0) / (order.chargeTypes.filter(ct => 
+            getChargeCategory(ct) === "logistics"
+          ).length || 1);
+          break;
+        case "acquiring":
+          amount = (order.acquiringAmount || 0) / (order.chargeTypes.filter(ct => 
+            getChargeCategory(ct) === "acquiring"
+          ).length || 1);
+          break;
+        case "returnLogistics":
+        case "returnRevenue":
+        case "returnCommission":
+        case "returnProcessing":
+          amount = (order.returnAmount || 0) / (order.chargeTypes.filter(ct => {
+            const cat = getChargeCategory(ct);
+            return cat === "returnLogistics" || cat === "returnRevenue" || 
+                   cat === "returnCommission" || cat === "returnProcessing";
+          }).length || 1);
+          break;
+        default:
+          amount = (order.otherFeesAmount || 0) / (order.chargeTypes.filter(ct => 
+            getChargeCategory(ct) === "other"
+          ).length || 1);
+      }
+
+      if (Math.abs(amount) > 0.01) {
+        virtualChargeRows.push({
+          chargeType,
+          totalAmount: amount,
+        });
       }
     }
   }
 
-  // Пересчитываем breakdown: оставляем только те типы начислений, которые есть в отфильтрованных заказах
-  const result: Array<{
-    groupName: string;
+  // Теперь пересчитываем breakdown на основе виртуальных chargeRows
+  const groupMap = new Map<string, {
     amount: number;
     count: number;
-    chargeTypes: Array<{ name: string; amount: number; count: number }>;
-  }> = [];
+    chargeTypes: Map<string, { amount: number; count: number }>;
+  }>();
 
-  for (const group of originalBreakdown) {
-    // Фильтруем chargeTypes в группе
-    const filteredChargeTypes = group.chargeTypes.filter((ct) =>
-      allowedChargeTypes.has(ct.name)
-    );
+  for (const row of virtualChargeRows) {
+    const chargeType = row.chargeType || "Прочее";
+    const amount = row.totalAmount;
+    const group = getChargeGroup(chargeType);
 
-    // Если в группе остались типы начислений, добавляем группу
-    if (filteredChargeTypes.length > 0) {
-      // Пересчитываем сумму и количество для группы
-      const groupAmount = filteredChargeTypes.reduce((sum, ct) => sum + ct.amount, 0);
-      const groupCount = filteredChargeTypes.reduce((sum, ct) => sum + ct.count, 0);
-
-      result.push({
-        groupName: group.groupName,
-        amount: groupAmount,
-        count: groupCount,
-        chargeTypes: filteredChargeTypes,
-      });
+    if (!groupMap.has(group)) {
+      groupMap.set(group, { amount: 0, count: 0, chargeTypes: new Map() });
     }
+
+    const groupData = groupMap.get(group)!;
+    groupData.amount += amount;
+    groupData.count++;
+
+    if (!groupData.chargeTypes.has(chargeType)) {
+      groupData.chargeTypes.set(chargeType, { amount: 0, count: 0 });
+    }
+
+    const chargeTypeData = groupData.chargeTypes.get(chargeType)!;
+    chargeTypeData.amount += amount;
+    chargeTypeData.count++;
   }
+
+  const result = Array.from(groupMap.entries())
+    .map(([groupName, data]) => ({
+      groupName,
+      amount: data.amount,
+      count: data.count,
+      chargeTypes: Array.from(data.chargeTypes.entries())
+        .map(([name, typeData]) => ({
+          name,
+          amount: typeData.amount,
+          count: typeData.count,
+        }))
+        .sort((a, b) => b.amount - a.amount),
+    }))
+    .sort((a, b) => b.amount - a.amount);
 
   return result;
 }
