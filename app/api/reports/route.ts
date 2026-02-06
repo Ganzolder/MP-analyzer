@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-
-// TODO: В реальной версии:
-// import prisma from "@/lib/db/prisma";
+import prisma from "@/lib/db/prisma";
 // import { getServerSession } from "next-auth";
 
 /**
@@ -11,7 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
  */
 export async function GET(request: NextRequest) {
   try {
-    // TODO: Проверка авторизации
+    // TODO: Проверка авторизации (пока получаем все отчёты)
     /*
     const session = await getServerSession();
     if (!session?.user) {
@@ -20,34 +18,36 @@ export async function GET(request: NextRequest) {
         { status: 401 }
       );
     }
-    
-    const reports = await prisma.report.findMany({
-      where: { userId: session.user.id },
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        fileName: true,
-        fileSize: true,
-        status: true,
-        createdAt: true,
-        totalOrders: true,
-        totalRevenue: true,
-        netProfit: true,
-      },
-    });
-    
-    return NextResponse.json({
-      success: true,
-      data: reports,
-    });
     */
     
-    // Mock: пустой список
-    return NextResponse.json({
-      success: true,
-      data: [],
-      message: "Функция истории отчётов будет доступна после авторизации",
-    });
+    try {
+      const reports = await prisma.report.findMany({
+        // where: { userId: session.user.id }, // Раскомментировать после добавления авторизации
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          fileName: true,
+          fileSize: true,
+          status: true,
+          createdAt: true,
+          totalOrders: true,
+          totalRevenue: true,
+          netProfit: true,
+        },
+      });
+      
+      return NextResponse.json({
+        success: true,
+        data: reports,
+      });
+    } catch (dbError: any) {
+      console.error("Ошибка при получении отчётов:", dbError.message);
+      return NextResponse.json({
+        success: true,
+        data: [],
+        message: "Ошибка при получении отчётов из БД",
+      });
+    }
   } catch (error) {
     console.error("Get reports error:", error);
     return NextResponse.json(

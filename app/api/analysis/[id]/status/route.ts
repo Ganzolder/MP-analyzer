@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-
-// В реальной версии:
-// import prisma from "@/lib/db/prisma";
+import prisma from "@/lib/db/prisma";
 
 /**
  * GET /api/analysis/[id]/status
@@ -22,33 +20,36 @@ export async function GET(
       );
     }
     
-    // TODO: В реальной версии получать из БД
-    /*
-    const report = await prisma.report.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        status: true,
-        progress: true,
-        currentStep: true,
-        errorMessage: true,
-      },
-    });
-    
-    if (!report) {
-      return NextResponse.json(
-        { error: "Анализ не найден" },
-        { status: 404 }
-      );
+    // Получаем из БД
+    try {
+      const report = await prisma.report.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          status: true,
+          progress: true,
+          currentStep: true,
+          errorMessage: true,
+        },
+      });
+      
+      if (report) {
+        return NextResponse.json({
+          success: true,
+          data: {
+            id: report.id,
+            status: report.status,
+            progress: report.progress,
+            currentStep: report.currentStep,
+            error: report.errorMessage,
+          },
+        });
+      }
+    } catch (dbError: any) {
+      console.error("Ошибка при получении статуса:", dbError.message);
     }
     
-    return NextResponse.json({
-      success: true,
-      data: report,
-    });
-    */
-    
-    // Mock: всегда возвращаем "completed"
+    // Fallback: если не найдено в БД
     return NextResponse.json({
       success: true,
       data: {

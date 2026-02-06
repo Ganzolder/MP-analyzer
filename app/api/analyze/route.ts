@@ -8,6 +8,7 @@ import { getChargeCategory } from "@/lib/analysis/constants";
 import { logger } from "@/lib/utils/logger";
 import { SummaryCalculator } from "@/lib/analysis/calculators/summary-calculator";
 import type { AggregatedOrder, OrderStatus } from "@/lib/analysis/types";
+import prisma from "@/lib/db/prisma";
 
 // Путь к демо-файлу
 const DEMO_FILE_PATH = path.join(process.cwd(), "test", "Отчет по начислениям_01.10.2025-31.10.2025 (2).xlsx");
@@ -29,6 +30,7 @@ export async function POST(request: NextRequest) {
     let analysisId: string;
     let costData: Map<string, number> | undefined; // Объявляем в начале функции
     let filesToProcess: File[] = []; // Файлы для обработки
+    let totalSize = 0; // Общий размер файлов
     
     if (isDemo) {
       // Демо-режим: используем тестовый файл
@@ -75,7 +77,7 @@ export async function POST(request: NextRequest) {
         : `Объединённый отчёт (${filesToProcess.length} файлов)`;
       
       // Проверяем типы и размеры файлов
-      let totalSize = 0;
+      totalSize = 0;
       for (const file of filesToProcess) {
         const lowerName = file.name.toLowerCase();
         if (!lowerName.endsWith(".xlsx") && !lowerName.endsWith(".xls")) {
@@ -660,8 +662,15 @@ export async function POST(request: NextRequest) {
       netPayout: `${analysisResult.summary.netPayout.toLocaleString("ru-RU")} ₽`,
     });
     
-    // Вычисляем общий размер файлов
-    const totalSize = filesToProcess.reduce((sum, f) => sum + f.size, 0);
+    // Вычисляем общий размер файлов (если не был вычислен ранее, например в демо-режиме)
+    if (totalSize === 0) {
+      if (filesToProcess.length > 0) {
+        totalSize = filesToProcess.reduce((sum, f) => sum + f.size, 0);
+      } else if (isDemo && buffer) {
+        // В демо-режиме используем размер буфера
+        totalSize = buffer.length;
+      }
+    }
     
     // Преобразуем результат в формат для фронтенда
     const result = transformToFrontendFormat(analysisResult, analysisId, fileName, totalSize);
@@ -676,6 +685,34 @@ export async function POST(request: NextRequest) {
       console.log("   Образец первой записи:", JSON.stringify(result.dailyMetrics[0], null, 2).substring(0, 200));
     }
     console.log("=".repeat(60));
+    
+    // Сохранение результата в базу данных
+    try {
+      const report = await prisma.report.create({
+        data: {
+          id: analysisId,
+          fileName: fileName,
+          fileSize: totalSize,
+          filePath: fileName, // В production можно сохранять путь к файлу в storage
+          customPrompt: undefined, // Можно добавить позже
+          status: "completed",
+          progress: 100,
+          currentStep: "Завершено",
+          analysisResults: JSON.stringify(result),
+          periodStart: result.period?.start ? new Date(result.period.start) : null,
+          periodEnd: result.period?.end ? new Date(result.period.end) : null,
+          totalOrders: result.summary?.totalOrders || null,
+          totalRevenue: result.summary?.grossRevenue || null,
+          netProfit: result.summary?.netProfit || null,
+        },
+      });
+      console.log("✅ [API] Результат сохранён в БД:", report.id);
+    } catch (dbError: any) {
+      // Логируем ошибку, но не прерываем выполнение
+      console.error("⚠️ [API] Ошибка при сохранении в БД:", dbError.message);
+      logger.warn("API", "Не удалось сохранить результат в БД", dbError);
+      // Продолжаем выполнение - результат всё равно возвращается клиенту
+    }
     
     return NextResponse.json(result);
     

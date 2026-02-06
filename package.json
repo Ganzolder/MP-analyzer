@@ -12,6 +12,7 @@
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
+    "db:check": "node scripts/check-database.js",
     "python:dev": "cd python-service && uvicorn main:app --reload --port 8000",
     "postinstall": "prisma generate"
   },

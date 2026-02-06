@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMockAnalysisResult } from "@/lib/mock/analysis-mock";
-
-// В реальной версии:
-// import prisma from "@/lib/db/prisma";
+import prisma from "@/lib/db/prisma";
 
 /**
  * GET /api/analysis/[id]
@@ -22,30 +20,30 @@ export async function GET(
       );
     }
     
-    // TODO: В реальной версии получать из БД
-    /*
-    const report = await prisma.report.findUnique({
-      where: { id },
-    });
-    
-    if (!report) {
-      return NextResponse.json(
-        { error: "Анализ не найден" },
-        { status: 404 }
-      );
+    // Пытаемся получить из БД
+    try {
+      const report = await prisma.report.findUnique({
+        where: { id },
+      });
+      
+      if (report && report.analysisResults) {
+        const analysisResults = JSON.parse(report.analysisResults);
+        return NextResponse.json({
+          success: true,
+          data: {
+            ...analysisResults,
+            id: report.id,
+            fileName: report.fileName,
+            createdAt: report.createdAt,
+          },
+        });
+      }
+    } catch (dbError: any) {
+      console.error("Ошибка при получении из БД:", dbError.message);
+      // Продолжаем - попробуем mock данные
     }
     
-    return NextResponse.json({
-      success: true,
-      data: {
-        ...report,
-        analysisResults: JSON.parse(report.analysisResults || "{}"),
-        aiInsights: JSON.parse(report.aiInsights || "{}"),
-      },
-    });
-    */
-    
-    // Mock данные
+    // Fallback на mock данные, если не найдено в БД
     const mockResult = getMockAnalysisResult(id);
     
     return NextResponse.json({
@@ -72,12 +70,15 @@ export async function DELETE(
   try {
     const { id } = params;
     
-    // TODO: В реальной версии удалять из БД
-    /*
-    await prisma.report.delete({
-      where: { id },
-    });
-    */
+    // Удаляем из БД
+    try {
+      await prisma.report.delete({
+        where: { id },
+      });
+    } catch (dbError: any) {
+      // Если записи нет в БД, это не критично
+      console.log("Запись не найдена в БД или уже удалена:", dbError.message);
+    }
     
     return NextResponse.json({
       success: true,

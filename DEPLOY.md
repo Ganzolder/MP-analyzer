@@ -1,280 +1,207 @@
-# 🚀 Инструкция по деплою на Deploy-F.com
+# 🚀 Инструкция по деплою на Vercel
 
-## 📋 Подготовка проекта
+## Предварительная подготовка
 
-### 1. Проверка зависимостей
+### 1. ✅ Проверка Git репозитория
 
-Убедитесь, что все зависимости установлены:
+Убедитесь, что все изменения закоммичены:
+
 ```bash
-npm install
+git status
+git add .
+git commit -m "Prepare for deployment"
+git push
 ```
 
-### 2. Сборка проекта локально (для проверки)
+### 2. ✅ Настройка переменных окружения в Vercel
+
+Перейдите в **Vercel Dashboard → Your Project → Settings → Environment Variables** и добавьте:
+
+#### Обязательные переменные:
+
+```env
+# База данных Supabase (PostgreSQL)
+DATABASE_URL="postgresql://postgres:[YOUR-PASSWORD]@db.vkazxfjimigdixvphori.supabase.co:5432/postgres"
+
+# NextAuth
+NEXTAUTH_URL="https://your-app.vercel.app"
+NEXTAUTH_SECRET="your-secret-key-generate-with-openssl-rand-base64-32"
+```
+
+#### Опциональные переменные (для AI-функций):
+
+```env
+# AI Providers (если используете)
+ZAI_API_KEY="your-zai-api-key"
+OPENAI_API_KEY="sk-..."
+ANTHROPIC_API_KEY=""
+GOOGLE_GENERATIVE_AI_API_KEY=""
+
+# Python Service (если используете)
+PYTHON_SERVICE_URL="https://your-python-service.vercel.app"
+```
+
+### 3. ✅ Применение миграций БД
+
+**Важно:** Перед деплоем убедитесь, что миграции применены к Supabase:
+
+1. Откройте **Supabase Dashboard → SQL Editor**
+2. Выполните миграции из `prisma/migrations/` (если есть)
+3. Примените RLS политики из `prisma/migrations/setup-rls.sql`
+
+### 4. ✅ Проверка vercel.json
+
+Файл `vercel.json` уже настроен:
+- ✅ Build команда включает `prisma generate`
+- ✅ API routes имеют увеличенный timeout (300s)
+- ✅ Увеличена память для API функций (3008MB)
+
+## Процесс деплоя
+
+### Вариант 1: Деплой через Vercel CLI (рекомендуется)
 
 ```bash
+# Установка Vercel CLI (если не установлен)
+npm i -g vercel
+
+# Логин в Vercel
+vercel login
+
+# Деплой
+vercel --prod
+```
+
+### Вариант 2: Деплой через GitHub/GitLab
+
+1. Подключите репозиторий к Vercel:
+   - Vercel Dashboard → **Add New Project**
+   - Выберите ваш Git репозиторий
+   - Настройте переменные окружения (см. выше)
+
+2. Vercel автоматически задеплоит при каждом push в `main`/`master`
+
+### Вариант 3: Деплой через Vercel Dashboard
+
+1. Vercel Dashboard → **Deployments**
+2. Нажмите **Deploy**
+3. Выберите репозиторий и ветку
+
+## После деплоя
+
+### 1. Проверка работоспособности
+
+Откройте endpoint проверки БД:
+```
+https://your-app.vercel.app/api/health/db
+```
+
+Должен вернуть:
+```json
+{
+  "success": true,
+  "checks": {
+    "connection": true,
+    "tables": {...},
+    "write": true,
+    "read": true
+  },
+  "message": "✅ База данных настроена правильно"
+}
+```
+
+### 2. Проверка основных страниц
+
+- ✅ Главная: `https://your-app.vercel.app`
+- ✅ Калькулятор: `https://your-app.vercel.app/calculator`
+- ✅ API Reports: `https://your-app.vercel.app/api/reports`
+
+### 3. Тестовая загрузка файла
+
+1. Загрузите тестовый файл на главной странице
+2. Проверьте, что анализ запустился
+3. Проверьте Supabase Dashboard → Table Editor → Report
+4. Должна появиться новая запись
+
+## Возможные проблемы
+
+### Ошибка: "Prisma Client not generated"
+
+**Решение:**
+- Убедитесь, что в `package.json` есть `"postinstall": "prisma generate"`
+- Проверьте, что `vercel.json` содержит `"buildCommand": "npx prisma generate && npm run build"`
+
+### Ошибка: "Database connection failed"
+
+**Решение:**
+- Проверьте `DATABASE_URL` в Vercel Environment Variables
+- Убедитесь, что пароль правильный
+- Проверьте, что Supabase проект не заблокирован
+
+### Ошибка: "RLS policy violation"
+
+**Решение:**
+- Примените `prisma/migrations/setup-rls.sql` в Supabase SQL Editor
+- Проверьте политики в Supabase Dashboard → Authentication → Policies
+
+### Ошибка: "Function timeout"
+
+**Решение:**
+- `vercel.json` уже настроен с `maxDuration: 300`
+- Если нужно больше, увеличьте в Vercel Dashboard → Functions
+
+### Медленная сборка
+
+**Решение:**
+- Используйте Vercel Build Cache
+- Проверьте, что `node_modules` не коммитятся в Git
+
+## Автоматические деплои
+
+После настройки, каждый push в `main`/`master` будет автоматически деплоиться на production.
+
+Для preview деплоев (для других веток):
+- Vercel автоматически создаст preview URL для каждого PR
+
+## Мониторинг
+
+- **Vercel Dashboard → Deployments** - история деплоев
+- **Vercel Dashboard → Analytics** - метрики производительности
+- **Vercel Dashboard → Functions** - логи API routes
+- **Supabase Dashboard → Logs** - логи БД
+
+## Откат (Rollback)
+
+Если что-то пошло не так:
+
+1. Vercel Dashboard → **Deployments**
+2. Найдите предыдущий успешный деплой
+3. Нажмите **"..." → Promote to Production**
+
+## Чеклист перед деплоем
+
+- [ ] Все изменения закоммичены и запушены
+- [ ] `DATABASE_URL` настроен в Vercel
+- [ ] `NEXTAUTH_URL` и `NEXTAUTH_SECRET` настроены
+- [ ] Миграции БД применены в Supabase
+- [ ] RLS политики применены
+- [ ] Локально всё работает (`npm run build` успешен)
+- [ ] Нет ошибок линтера (`npm run lint`)
+
+## Полезные команды
+
+```bash
+# Локальная проверка сборки
 npm run build
+
+# Проверка БД
+npm run db:check
+
+# Генерация Prisma клиента
+npm run db:generate
+
+# Применение миграций (локально)
+npm run db:migrate
+
+# Применение миграций (production)
+npm run db:migrate:deploy
 ```
-
-Если сборка прошла успешно, в папке `.next` будет готовый production build.
-
-### 3. Генерация Prisma клиента
-
-Prisma клиент должен быть сгенерирован перед деплоем:
-```bash
-npx prisma generate
-```
-
-## 📦 Создание архива для деплоя
-
-### Вариант 1: PowerShell (Windows)
-
-```powershell
-# Исключаем ненужные папки и файлы
-Compress-Archive -Path * -DestinationPath deploy.zip -Exclude node_modules,.git,test,temp,*.db,*.db-journal,.next,dist
-```
-
-### Вариант 2: Вручную
-
-1. Откройте папку проекта
-2. Выделите ВСЕ файлы и папки, кроме:
-   - `node_modules`
-   - `.git`
-   - `test`
-   - `temp`
-   - `*.db` и `*.db-journal`
-   - `.next` (будет пересобран на сервере)
-   - `dist`
-3. Правой кнопкой → "Сжать в ZIP"
-4. Назовите архив `deploy.zip`
-
-### ⚠️ ВАЖНО: Что должно быть в архиве
-
-✅ **Обязательно включить:**
-- `package.json` и `package-lock.json`
-- `next.config.js`
-- `tsconfig.json`
-- `tailwind.config.ts`
-- `postcss.config.js`
-- Папка `app/`
-- Папка `components/`
-- Папка `lib/`
-- Папка `prisma/` (со схемой, но БЕЗ `dev.db`)
-- Папка `public/` (если есть)
-- `.deployignore` (опционально)
-
-❌ **НЕ включать:**
-- `node_modules/` (установится на сервере)
-- `.git/`
-- `test/`
-- `temp/`
-- `*.db` и `*.db-journal`
-- `.next/` (пересоберется)
-- `python-service/` (отдельный сервис, если нужен)
-
-## 🌐 Настройка на Deploy-F.com
-
-### 1. Регистрация и вход
-
-1. Перейдите на [deploy-f.com](https://deploy-f.com)
-2. Зарегистрируйтесь или войдите через Telegram-бот
-
-### 2. Создание проекта
-
-1. Нажмите "Создать проект" или "Добавить приложение"
-2. Выберите тип: **Node.js**
-3. Название проекта: `ozon-analyzer` (или любое другое)
-
-### 3. Загрузка архива
-
-1. Нажмите "Выбрать файл" или перетащите `deploy.zip`
-2. Дождитесь завершения загрузки (1-2 минуты)
-
-### 4. Настройка команд
-
-**Команда сборки:**
-```bash
-npm install && npx prisma generate && npm run build
-```
-
-**Команда запуска:**
-```bash
-npm start
-```
-
-**Порт:**
-```
-3000
-```
-
-### 5. Переменные окружения
-
-В разделе "Переменные окружения" добавьте:
-
-#### Обязательные:
-
-```env
-NODE_ENV=production
-PORT=3000
-```
-
-#### База данных:
-
-**Вариант 1: SQLite (для тестирования)**
-```env
-DATABASE_URL=file:./prisma/prod.db
-```
-
-**Вариант 2: PostgreSQL (рекомендуется для production)**
-
-Если у Deploy-F есть поддержка PostgreSQL:
-1. Создайте БД в разделе "Базы данных"
-2. Скопируйте connection string
-3. Добавьте:
-```env
-DATABASE_URL=postgresql://user:password@host:port/database?schema=public
-```
-
-#### NextAuth (если используется):
-
-```env
-NEXTAUTH_URL=https://your-app.deploy-f.com
-NEXTAUTH_SECRET=your-secret-key-generate-with-openssl-rand-base64-32
-```
-
-Для генерации секрета:
-```bash
-openssl rand -base64 32
-```
-
-#### Загрузка файлов:
-
-```env
-UPLOAD_DIR=./uploads
-MAX_FILE_SIZE=52428800
-```
-
-#### AI провайдеры (опционально):
-
-```env
-ZAI_API_KEY=your-zai-api-key-here
-# или
-OPENAI_API_KEY=sk-...
-# или
-ANTHROPIC_API_KEY=...
-# или
-GOOGLE_GENERATIVE_AI_API_KEY=...
-```
-
-#### Python сервис (если используется):
-
-Если Python сервис деплоится отдельно:
-```env
-PYTHON_SERVICE_URL=https://your-python-service.deploy-f.com
-```
-
-Если не используется, можно не добавлять.
-
-### 6. Инициализация базы данных
-
-После первого деплоя нужно инициализировать БД. В разделе "Консоль" или через SSH выполните:
-
-```bash
-npx prisma db push
-```
-
-Или если используете миграции:
-```bash
-npx prisma migrate deploy
-```
-
-## 🚀 Деплой
-
-1. Нажмите кнопку **"Задеплоить"** или **"Запустить"**
-2. Дождитесь завершения (30 секунд - 2 минуты)
-3. Проверьте логи на наличие ошибок
-
-## ✅ Проверка работы
-
-1. Откройте URL приложения (например: `your-app.deploy-f.com`)
-2. Проверьте логи в панели Deploy-F
-3. Убедитесь, что нет ошибок
-
-## 🔄 Обновление приложения
-
-Когда внесете изменения:
-
-1. **Локально:**
-   ```bash
-   npm run build  # Проверка сборки
-   ```
-
-2. **Создайте новый архив** (как в шаге 3)
-
-3. **В Deploy-F:**
-   - Загрузите новый архив
-   - Нажмите "Передеплоить"
-
-## 🐛 Решение проблем
-
-### Проблема: "Cannot find module '@prisma/client'"
-
-**Решение:**
-- Убедитесь, что в команде сборки есть `npx prisma generate`
-- Проверьте, что папка `prisma/` включена в архив
-
-### Проблема: "Prisma Client has not been generated yet"
-
-**Решение:**
-- Добавьте `npx prisma generate` в команду сборки
-- Или выполните вручную после деплоя через консоль
-
-### Проблема: "Database does not exist"
-
-**Решение:**
-- Проверьте `DATABASE_URL` в переменных окружения
-- Выполните `npx prisma db push` через консоль
-
-### Проблема: "502 Bad Gateway"
-
-**Решение:**
-- Проверьте, что приложение слушает порт из переменной `PORT`
-- Убедитесь, что команда запуска правильная: `npm start`
-- Проверьте логи на наличие ошибок
-
-### Проблема: "File upload failed"
-
-**Решение:**
-- Убедитесь, что `UPLOAD_DIR` указан правильно
-- Проверьте права на запись в папку `uploads`
-- Возможно, нужно использовать абсолютный путь
-
-## 📝 Дополнительные настройки
-
-### Подключение своего домена
-
-1. В настройках проекта найдите "Домены"
-2. Добавьте свой домен
-3. Настройте DNS записи согласно инструкции
-
-### SSL сертификат
-
-Deploy-F предоставляет SSL автоматически для всех доменов.
-
-### Мониторинг
-
-Следите за использованием ресурсов в панели управления.
-
-## 💡 Рекомендации
-
-1. **База данных:** Для production используйте PostgreSQL вместо SQLite
-2. **Файлы:** Рассмотрите использование облачного хранилища (S3, Yandex Object Storage) вместо локальной папки
-3. **Python сервис:** Если нужен, деплойте отдельно или используйте альтернативу
-4. **Логи:** Регулярно проверяйте логи на наличие ошибок
-5. **Бэкапы:** Настройте регулярные бэкапы базы данных
-
-## 📞 Поддержка
-
-Если возникли проблемы:
-1. Проверьте логи в панели Deploy-F
-2. Изучите документацию Deploy-F
-3. Обратитесь в поддержку Deploy-F через Telegram-бот
