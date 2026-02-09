@@ -688,6 +688,11 @@ export async function POST(request: NextRequest) {
     
     // Сохранение результата в базу данных
     try {
+      console.log("💾 [API] Попытка сохранения в БД...");
+      console.log("   DATABASE_URL:", process.env.DATABASE_URL ? "✅ Настроен" : "❌ НЕ НАСТРОЕН");
+      console.log("   Analysis ID:", analysisId);
+      console.log("   File name:", fileName);
+      
       const report = await prisma.report.create({
         data: {
           id: analysisId,
@@ -707,10 +712,29 @@ export async function POST(request: NextRequest) {
         },
       });
       console.log("✅ [API] Результат сохранён в БД:", report.id);
+      console.log("   Report ID:", report.id);
+      console.log("   Created at:", report.createdAt);
     } catch (dbError: any) {
-      // Логируем ошибку, но не прерываем выполнение
-      console.error("⚠️ [API] Ошибка при сохранении в БД:", dbError.message);
-      logger.warn("API", "Не удалось сохранить результат в БД", dbError);
+      // Логируем ошибку подробно
+      console.error("❌ [API] ОШИБКА при сохранении в БД:");
+      console.error("   Сообщение:", dbError.message);
+      console.error("   Код:", dbError.code);
+      console.error("   Детали:", dbError.toString());
+      if (dbError.meta) {
+        console.error("   Meta:", JSON.stringify(dbError.meta, null, 2));
+      }
+      if (process.env.NODE_ENV === "development") {
+        console.error("   Stack:", dbError.stack);
+      }
+      logger.error("API", "Не удалось сохранить результат в БД", dbError);
+      
+      // Добавляем информацию об ошибке в ответ (для отладки)
+      if (!result.error) {
+        result.error = "Ошибка сохранения в БД";
+        result.dbError = process.env.NODE_ENV === "development" 
+          ? dbError.message 
+          : "Не удалось сохранить результат в базу данных";
+      }
       // Продолжаем выполнение - результат всё равно возвращается клиенту
     }
     
