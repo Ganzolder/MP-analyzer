@@ -21,6 +21,7 @@ export async function GET(request: NextRequest) {
     */
     
     try {
+      console.log("📋 [API] Запрос списка отчётов из БД...");
       const reports = await prisma.report.findMany({
         // where: { userId: session.user.id }, // Раскомментировать после добавления авторизации
         orderBy: { createdAt: "desc" },
@@ -36,15 +37,35 @@ export async function GET(request: NextRequest) {
         },
       });
       
+      console.log(`✅ [API] Найдено отчётов: ${reports.length}`);
+      if (reports.length > 0) {
+        console.log("   Первый отчёт:", {
+          id: reports[0].id,
+          fileName: reports[0].fileName,
+          createdAt: reports[0].createdAt,
+        });
+      }
+      
       return NextResponse.json({
         success: true,
         data: reports,
+        count: reports.length,
       });
     } catch (dbError: any) {
-      console.error("Ошибка при получении отчётов:", dbError.message);
+      console.error("❌ [API] Ошибка при получении отчётов из БД:");
+      console.error("   Сообщение:", dbError.message);
+      console.error("   Код:", dbError.code);
+      console.error("   Детали:", dbError.toString());
+      if (dbError.meta) {
+        console.error("   Meta:", JSON.stringify(dbError.meta, null, 2));
+      }
+      if (process.env.NODE_ENV === "development") {
+        console.error("   Stack:", dbError.stack);
+      }
       return NextResponse.json({
-        success: true,
+        success: false,
         data: [],
+        error: dbError.message,
         message: "Ошибка при получении отчётов из БД",
       });
     }
