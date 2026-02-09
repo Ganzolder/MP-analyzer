@@ -727,15 +727,8 @@ export async function POST(request: NextRequest) {
         console.error("   Stack:", dbError.stack);
       }
       logger.error("API", "Не удалось сохранить результат в БД", dbError);
-      
-      // Добавляем информацию об ошибке в ответ (для отладки)
-      if (!result.error) {
-        result.error = "Ошибка сохранения в БД";
-        result.dbError = process.env.NODE_ENV === "development" 
-          ? dbError.message 
-          : "Не удалось сохранить результат в базу данных";
-      }
       // Продолжаем выполнение - результат всё равно возвращается клиенту
+      // Ошибка уже залогирована в консоль выше
     }
     
     return NextResponse.json(result);
