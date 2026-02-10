@@ -34,8 +34,11 @@ export function Header() {
           <NavLink href="/calculator">
             Калькулятор
           </NavLink>
-          <NavLink href="/reports" badge="Скоро">
+          <NavLink href="/reports">
             История
+          </NavLink>
+          <NavLink href="/admin/category-commissions">
+            Комиссии
           </NavLink>
           <NavLink href="/settings" badge="Скоро">
             Настройки
@@ -74,8 +77,11 @@ export function Header() {
             <MobileNavLink href="/calculator" icon={<Calculator className="h-4 w-4" />} onClick={() => setIsMenuOpen(false)}>
               Калькулятор
             </MobileNavLink>
-            <MobileNavLink href="/reports" icon={<FileText className="h-4 w-4" />} badge="Скоро" onClick={() => setIsMenuOpen(false)}>
+            <MobileNavLink href="/reports" icon={<FileText className="h-4 w-4" />} onClick={() => setIsMenuOpen(false)}>
               История отчётов
+            </MobileNavLink>
+            <MobileNavLink href="/admin/category-commissions" icon={<Settings className="h-4 w-4" />} onClick={() => setIsMenuOpen(false)}>
+              Комиссии
             </MobileNavLink>
             <MobileNavLink href="/settings" icon={<Settings className="h-4 w-4" />} badge="Скоро" onClick={() => setIsMenuOpen(false)}>
               Настройки
