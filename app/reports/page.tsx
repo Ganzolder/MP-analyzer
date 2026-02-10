@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate, formatCurrency } from "@/lib/utils";
+import { useToast } from "@/components/ui/use-toast";
 
 interface Report {
   id: string;
@@ -27,6 +28,8 @@ export default function ReportsPage() {
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const { toast } = useToast();
 
   useEffect(() => {
     fetchReports();
@@ -48,6 +51,38 @@ export default function ReportsPage() {
       setError(err.message || "Ошибка при загрузке отчётов");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteReport = async (id: string) => {
+    const confirmed = window.confirm("Вы уверены, что хотите удалить этот отчёт? Это действие необратимо.");
+    if (!confirmed) return;
+
+    try {
+      setDeletingId(id);
+      const response = await fetch(`/api/analysis/${id}`, {
+        method: "DELETE",
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || data.message || "Не удалось удалить отчёт");
+      }
+
+      setReports((prev) => prev.filter((report) => report.id !== id));
+
+      toast({
+        title: "Отчёт удалён",
+        description: "Отчёт успешно удалён из истории.",
+      });
+    } catch (err: any) {
+      toast({
+        title: "Ошибка при удалении",
+        description: err?.message || "Не удалось удалить отчёт. Попробуйте ещё раз.",
+        variant: "destructive",
+      });
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -178,12 +213,28 @@ export default function ReportsPage() {
                           )}
                         </div>
 
-                        <div className="flex-shrink-0">
+                        <div className="flex-shrink-0 flex items-center gap-2">
                           <Button asChild>
                             <Link href={`/analysis/${report.id}`}>
                               Открыть
                               <ArrowRight className="ml-2 h-4 w-4" />
                             </Link>
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={deletingId === report.id}
+                            onClick={() => handleDeleteReport(report.id)}
+                          >
+                            {deletingId === report.id ? (
+                              <span className="flex items-center gap-2">
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                Удаление...
+                              </span>
+                            ) : (
+                              "Удалить"
+                            )}
                           </Button>
                         </div>
                       </div>
