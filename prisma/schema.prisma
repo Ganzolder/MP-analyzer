@@ -235,3 +235,35 @@ model ShippingTariff {
   @@index([isActive])
   @@index([priority])
 }
+
+// Таблица категорий и комиссий маркетплейса (вознаграждение маркетплейса)
+model CategoryCommission {
+  id           String   @id @default(cuid())
+
+  // Маркетплейс
+  marketplace  String   @default("ozon") // ozon, wildberries, yandex-market
+
+  // Категория
+  categoryId   String?  // Внутренний код категории, если есть
+  categoryName String   // Отображаемое имя категории
+  categoryPath String?  // Полный путь категории (например, "Электроника / Смартфоны")
+
+  // Тип размещения / работы
+  fulfillment  String   // fbo, fbs, rfbs, express и т.п.
+
+  // Ставки вознаграждения
+  commissionPercent   Float    // Ставка комиссии в %, например 15.5
+  minCommissionAmount Float?   // Минимальная сумма комиссии (руб), если есть
+  fixedFeeAmount      Float?   // Фиксированная часть комиссии (руб), если есть
+
+  isActive    Boolean  @default(true)
+  validFrom   DateTime?
+  validTo     DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Индексы для быстрого поиска
+  @@index([marketplace, categoryName, fulfillment])
+  @@index([marketplace, categoryId, fulfillment])
+}
