@@ -178,3 +178,60 @@ model AIUsageLog {
   @@index([userId])
   @@index([createdAt])
 }
+
+// Тарифы перевозки для калькулятора
+model ShippingTariff {
+  id              String   @id @default(cuid())
+  
+  // Маркетплейс
+  marketplace     String   @default("ozon") // ozon, wildberries, yandex-market
+  
+  // Регионы
+  fromRegion      String?  // Регион отправления
+  toRegion        String?  // Регион назначения
+  fromCity        String?  // Город отправления
+  toCity          String?  // Город назначения
+  
+  // Тип доставки
+  deliveryType    String?  // standard, express, economy, etc
+  deliveryMethod  String?  // fbo, fbs, etc
+  
+  // Весовые параметры (в граммах)
+  weightMin       Float?   // Минимальный вес (г)
+  weightMax       Float?   // Максимальный вес (г)
+  weightStep      Float?   // Шаг веса (для расчёта)
+  
+  // Габариты (в мм)
+  lengthMin       Float?   // Минимальная длина
+  lengthMax       Float?   // Максимальная длина
+  widthMin        Float?   // Минимальная ширина
+  widthMax        Float?   // Максимальная ширина
+  heightMin       Float?   // Минимальная высота
+  heightMax       Float?   // Максимальная высота
+  volumeMin       Float?   // Минимальный объём (см³)
+  volumeMax       Float?   // Максимальный объём (см³)
+  
+  // Стоимость
+  basePrice       Float    // Базовая стоимость (руб)
+  pricePerKg      Float?   // Стоимость за кг (руб/кг)
+  pricePerVolume  Float?   // Стоимость за объём (руб/см³)
+  pricePerKm      Float?   // Стоимость за км (руб/км)
+  minPrice        Float?   // Минимальная стоимость
+  maxPrice        Float?   // Максимальная стоимость
+  
+  // Дополнительные параметры
+  category        String?  // Категория товара
+  isActive        Boolean  @default(true) // Активен ли тариф
+  priority        Int      @default(0) // Приоритет (если несколько тарифов подходят)
+  notes           String?  // Примечания
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Индексы для быстрого поиска
+  @@index([marketplace, fromRegion, toRegion])
+  @@index([marketplace, deliveryType])
+  @@index([weightMin, weightMax])
+  @@index([isActive])
+  @@index([priority])
+}

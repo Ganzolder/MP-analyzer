@@ -14,7 +14,8 @@
     "db:studio": "prisma studio",
     "db:check": "node scripts/check-database.js",
     "python:dev": "cd python-service && uvicorn main:app --reload --port 8000",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "analyze:tariffs": "node scripts/analyze-tariff-file.js"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^0.0.39",
