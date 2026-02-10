@@ -223,11 +223,21 @@ export async function POST(request: NextRequest) {
 
     // На всякий случай можно очистить старые записи по Ozon перед заливкой,
     // если таблица полностью заменяется.
-    await prisma.categoryCommission.deleteMany({
-      where: {
-        marketplace: "ozon",
-      },
-    });
+    try {
+      await prisma.categoryCommission.deleteMany({
+        where: {
+          marketplace: "ozon",
+        },
+      });
+      console.log("✅ [API] Старые записи CategoryCommission для Ozon очищены");
+    } catch (deleteError: any) {
+      // Если таблица не существует, это нормально (первая загрузка)
+      if (deleteError.message?.includes("does not exist") || deleteError.message?.includes("CategoryCommission")) {
+        console.log("ℹ️ [API] Таблица CategoryCommission ещё не существует, пропускаем очистку");
+      } else {
+        throw deleteError;
+      }
+    }
 
     const BATCH_SIZE = 1000;
     let inserted = 0;
@@ -266,10 +276,25 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: any) {
     console.error("❌ [API] Ошибка при загрузке категорий и комиссий:", error);
+    console.error("❌ [API] Stack trace:", error.stack);
+    
+    // Более детальная информация об ошибке
+    let errorMessage = error.message || "Неизвестная ошибка";
+    let errorDetails = "";
+    
+    // Проверяем, связана ли ошибка с БД
+    if (error.message?.includes("CategoryCommission") || error.message?.includes("does not exist")) {
+      errorDetails = "Таблица CategoryCommission не найдена в БД. Убедитесь, что миграция Prisma применена.";
+    } else if (error.message?.includes("prisma")) {
+      errorDetails = "Ошибка подключения к базе данных. Проверьте DATABASE_URL.";
+    }
+    
     return NextResponse.json(
       {
         error: "Ошибка при загрузке категорий и комиссий",
-        message: error.message,
+        message: errorMessage,
+        details: errorDetails || undefined,
+        stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
       },
       { status: 500 }
     );
