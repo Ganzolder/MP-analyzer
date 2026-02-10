@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { FileText, Calendar, TrendingUp, DollarSign, ShoppingCart, ArrowRight, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDate, formatCurrency } from "@/lib/utils";
 
@@ -214,30 +214,5 @@ export default function ReportsPage() {
         )}
       </motion.div>
     </div>
-  );
-}
-
-interface FeaturePreviewCardProps {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-}
-
-function FeaturePreviewCard({ icon, title, description }: FeaturePreviewCardProps) {
-  return (
-    <Card className="relative overflow-hidden group">
-      <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-      <CardHeader>
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-primary/10 rounded-lg text-primary">
-            {icon}
-          </div>
-          <div>
-            <CardTitle className="text-base">{title}</CardTitle>
-            <CardDescription className="text-sm">{description}</CardDescription>
-          </div>
-        </div>
-      </CardHeader>
-    </Card>
   );
 }
