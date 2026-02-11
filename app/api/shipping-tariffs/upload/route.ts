@@ -122,6 +122,7 @@ export async function POST(request: NextRequest) {
     // Читаем файл
     const arrayBuffer = await file.arrayBuffer();
     let data: any[][];
+    let detectedSheetName: string | null = null;
 
     if (lowerName.endsWith(".csv")) {
       // Парсинг CSV (нужно будет добавить библиотеку для CSV)
@@ -132,9 +133,53 @@ export async function POST(request: NextRequest) {
     } else {
       // Парсинг Excel
       const workbook = XLSX.read(arrayBuffer, { type: "array" });
-      const firstSheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[firstSheetName];
-      data = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: null }) as any[][];
+
+      // Ищем подходящий лист и строку заголовков:
+      // Находим строку, где одновременно встречаются "объ" и "тариф/ндс"
+      const findHeaderRowIndex = (rows: any[][]): number => {
+        const maxScan = Math.min(200, rows.length);
+        for (let i = 0; i < maxScan; i++) {
+          const row = rows[i] || [];
+          const cells = row.map((c) => String(c ?? "").toLowerCase().trim());
+          const hasVolume = cells.some((c) => c.includes("объ") || c.includes("обем") || c.includes("объем") || c.includes("volume"));
+          const hasTariff = cells.some((c) => c.includes("тариф") || c.includes("ндс") || c.includes("price") || c.includes("стоим"));
+          if (hasVolume && hasTariff) return i;
+        }
+        return -1;
+      };
+
+      let best: { sheetName: string; headerRowIndex: number; score: number; rows: any[][] } | null = null;
+
+      for (const sheetName of workbook.SheetNames) {
+        const ws = workbook.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as any[][];
+        if (!rows || rows.length < 2) continue;
+
+        const headerRowIndex = findHeaderRowIndex(rows);
+        if (headerRowIndex === -1) continue;
+
+        const headerCells = (rows[headerRowIndex] || []).map((c) => String(c ?? "").toLowerCase());
+        const score =
+          (headerCells.some((c) => c.includes("объ") || c.includes("обем") || c.includes("объем") || c.includes("volume")) ? 1 : 0) +
+          (headerCells.some((c) => c.includes("тариф") || c.includes("ндс")) ? 2 : 0);
+
+        if (!best || score > best.score) {
+          best = { sheetName, headerRowIndex, score, rows };
+        }
+      }
+
+      if (best) {
+        detectedSheetName = best.sheetName;
+        data = best.rows;
+        console.log("📋 [API] Выбран лист:", detectedSheetName);
+        console.log("📋 [API] Строка заголовков (предположительно):", best.headerRowIndex + 1);
+      } else {
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        detectedSheetName = firstSheetName;
+        data = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: null }) as any[][];
+        console.log("📋 [API] Не удалось подобрать лист автоматически. Используем первый:", firstSheetName);
+      }
     }
 
     if (data.length < 2) {
@@ -145,13 +190,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Ищем строку с заголовками (может быть не первая)
+    // Сканируем больше строк и требуем наличие обоих признаков: объём и тариф/ндс
     let headerRowIndex = 0;
-    for (let i = 0; i < Math.min(5, data.length); i++) {
-      const row = data[i];
-      if (row && row.some((cell: any) => {
-        const str = String(cell || "").toLowerCase();
-        return str.includes("тариф") || str.includes("объём") || str.includes("объем");
-      })) {
+    for (let i = 0; i < Math.min(200, data.length); i++) {
+      const row = data[i] || [];
+      const cells = row.map((cell: any) => String(cell ?? "").toLowerCase());
+      const hasVolume = cells.some((c) => c.includes("объ") || c.includes("обем") || c.includes("объем") || c.includes("volume"));
+      const hasTariff = cells.some((c) => c.includes("тариф") || c.includes("ндс") || c.includes("price") || c.includes("стоим"));
+      if (hasVolume && hasTariff) {
         headerRowIndex = i;
         break;
       }
@@ -160,6 +206,7 @@ export async function POST(request: NextRequest) {
     const headers = data[headerRowIndex].map((h: any) => String(h || "").trim());
     const headersLower = headers.map((h: string) => h.toLowerCase());
 
+    console.log("📋 [API] Лист:", detectedSheetName);
     console.log("📋 [API] Строка заголовков:", headerRowIndex + 1);
     console.log("📋 [API] Заголовки файла:", headers);
 
@@ -491,7 +538,16 @@ export async function POST(request: NextRequest) {
 
     if (tariffs.length === 0) {
       return NextResponse.json(
-        { error: "Не удалось распарсить ни одного тарифа из файла" },
+        {
+          error: "Не удалось распарсить ни одного тарифа из файла",
+          sheet: detectedSheetName,
+          headerRow: headerRowIndex + 1,
+          headers,
+          foundIndices: {
+            volumeRange: indices.volumeRange,
+            basePrice: indices.basePrice,
+          },
+        },
         { status: 400 }
       );
     }
