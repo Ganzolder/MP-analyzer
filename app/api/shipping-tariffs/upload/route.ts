@@ -183,6 +183,27 @@ export async function POST(request: NextRequest) {
     };
 
     // Находим индексы колонок (гибкий поиск по возможным названиям)
+    // Сначала ищем объём, чтобы исключить его из поиска стоимости
+    const volumeRangeIndex = findColumnIndex(["объём товара", "объем товара", "объём", "объем", "volume", "объём упаковки", "объем упаковки"]);
+    
+    // Функция для поиска колонки с исключением определённого индекса
+    const findColumnIndexExcluding = (possibleNames: string[], excludeIndex: number): number => {
+      for (let i = 0; i < headersLower.length; i++) {
+        if (i === excludeIndex) continue; // Пропускаем исключённую колонку
+        const header = headersLower[i];
+        for (const possible of possibleNames) {
+          const possibleLower = possible.toLowerCase();
+          if (header === possibleLower) {
+            return i;
+          }
+          if (header.includes(possibleLower) || possibleLower.includes(header)) {
+            return i;
+          }
+        }
+      }
+      return -1;
+    };
+
     const indices = {
       marketplace: findColumnIndex(["маркетплейс", "marketplace", "площадка"]),
       fromRegion: findColumnIndex(["регион отправления", "откуда", "from", "fromregion", "регион от"]),
@@ -199,8 +220,11 @@ export async function POST(request: NextRequest) {
       widthMax: findColumnIndex(["ширина макс", "ширина до", "widthmax"]),
       heightMin: findColumnIndex(["высота мин", "высота от", "heightmin"]),
       heightMax: findColumnIndex(["высота макс", "высота до", "heightmax"]),
-      volumeRange: findColumnIndex(["объём товара", "объем товара", "объём", "объем", "volume", "объём упаковки", "объем упаковки"]),
-      basePrice: findColumnIndex(["тариф с ндс", "тариф сндс", "базовая стоимость", "baseprice", "стоимость", "цена", "price", "тариф"]),
+      volumeRange: volumeRangeIndex,
+      // Ищем стоимость, исключая колонку объёма
+      basePrice: volumeRangeIndex !== -1 
+        ? findColumnIndexExcluding(["тариф с ндс", "тариф сндс", "базовая стоимость", "baseprice", "стоимость", "цена", "price", "тариф"], volumeRangeIndex)
+        : findColumnIndex(["тариф с ндс", "тариф сндс", "базовая стоимость", "baseprice", "стоимость", "цена", "price", "тариф"]),
       pricePerKg: findColumnIndex(["цена за кг", "priceperkg", "за кг", "руб/кг"]),
       pricePerVolume: findColumnIndex(["цена за объём", "pricepervolume", "за объём", "руб/см³", "цена за объем"]),
       volumeMin: findColumnIndex(["объём мин", "объем мин", "объём от", "объем от", "volumemin", "volume min"]),
@@ -229,13 +253,24 @@ export async function POST(request: NextRequest) {
     
     // Проверяем, что не перепутали колонки (объём не должен быть стоимостью)
     if (indices.volumeRange === indices.basePrice && indices.volumeRange !== -1) {
-      return NextResponse.json(
-        { 
-          error: "Колонки объёма и стоимости совпадают. Проверьте структуру файла.",
-          headers: headers,
-        },
-        { status: 400 }
-      );
+      // Если всё равно совпали, пробуем найти стоимость по более точным критериям
+      const precisePriceIndex = findColumnIndexExcluding(["тариф с ндс", "тариф сндс"], indices.volumeRange);
+      if (precisePriceIndex !== -1) {
+        indices.basePrice = precisePriceIndex;
+        console.log("📋 [API] Исправлен индекс стоимости на более точный:", precisePriceIndex);
+      } else {
+        return NextResponse.json(
+          { 
+            error: "Колонки объёма и стоимости совпадают. Проверьте структуру файла.",
+            headers: headers,
+            foundIndices: {
+              volumeRange: indices.volumeRange !== -1 ? `${indices.volumeRange}: "${headers[indices.volumeRange]}"` : "не найдена",
+              basePrice: indices.basePrice !== -1 ? `${indices.basePrice}: "${headers[indices.basePrice]}"` : "не найдена",
+            }
+          },
+          { status: 400 }
+        );
+      }
     }
 
     // Парсим данные (начинаем со строки после заголовков)
