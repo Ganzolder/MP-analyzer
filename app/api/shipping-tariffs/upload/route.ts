@@ -270,7 +270,14 @@ export async function POST(request: NextRequest) {
         return String(value).trim() || null;
       };
 
-      // Функция для парсинга диапазона объёма (например "0 - 0.200 л" или "от 190.001 л")
+      // Функция для парсинга диапазона объёма
+      // Поддерживает форматы:
+      // - "До Xл" → min: 0, max: X
+      // - "от Xл до Yл" → min: X, max: Y
+      // - "от Xл - Yл" → min: X, max: Y (дефис вместо "до")
+      // - "Более Xл" → min: X, max: null
+      // - "X - Y л" → min: X, max: Y
+      // - "от X.XXX л" → min: X, max: null
       const parseVolumeRange = (value: any): { volumeMin: number | null; volumeMax: number | null } => {
         if (value === null || value === undefined || value === "") {
           return { volumeMin: null, volumeMax: null };
@@ -282,7 +289,37 @@ export async function POST(request: NextRequest) {
           .replace(/\s+/g, " ")
           .replace(/,/g, ".");
         
-        // Парсим "от X.XXX л" (например "от 190.001 л")
+        // Парсим "До Xл" (например "До 1л")
+        const upToMatch = normalized.match(/до\s*(\d+(?:\.\d+)?)\s*л?/i);
+        if (upToMatch) {
+          const max = parseFloat(upToMatch[1]);
+          return { volumeMin: 0, volumeMax: max * 1000 }; // Конвертируем литры в см³
+        }
+        
+        // Парсим "Более Xл" (например "Более 1000л")
+        const moreThanMatch = normalized.match(/более\s*(\d+(?:\.\d+)?)\s*л?/i);
+        if (moreThanMatch) {
+          const min = parseFloat(moreThanMatch[1]);
+          return { volumeMin: min * 1000, volumeMax: null }; // Конвертируем литры в см³
+        }
+        
+        // Парсим "от Xл до Yл" (например "от 1л до 2л", "от 3л до 190л")
+        const fromToMatch = normalized.match(/от\s*(\d+(?:\.\d+)?)\s*л?\s*до\s*(\d+(?:\.\d+)?)\s*л?/i);
+        if (fromToMatch) {
+          const min = parseFloat(fromToMatch[1]);
+          const max = parseFloat(fromToMatch[2]);
+          return { volumeMin: min * 1000, volumeMax: max * 1000 }; // Конвертируем литры в см³
+        }
+        
+        // Парсим "от Xл - Yл" (например "от 190л - 1000л") - дефис вместо "до"
+        const fromDashMatch = normalized.match(/от\s*(\d+(?:\.\d+)?)\s*л?\s*-\s*(\d+(?:\.\d+)?)\s*л?/i);
+        if (fromDashMatch) {
+          const min = parseFloat(fromDashMatch[1]);
+          const max = parseFloat(fromDashMatch[2]);
+          return { volumeMin: min * 1000, volumeMax: max * 1000 }; // Конвертируем литры в см³
+        }
+        
+        // Парсим "от X.XXX л" (например "от 190.001 л") - без верхней границы
         const fromMatch = normalized.match(/от\s*(\d+(?:\.\d+)?)\s*л?/i);
         if (fromMatch) {
           const min = parseFloat(fromMatch[1]);
