@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BarChart3, Settings, FileText, Menu, X, Calculator } from "lucide-react";
+import { BarChart3, Settings, FileText, Menu, X, Calculator, Package } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,9 @@ export function Header() {
           </NavLink>
           <NavLink href="/admin/category-commissions">
             Комиссии
+          </NavLink>
+          <NavLink href="/admin/shipping-tariffs">
+            Тарифы
           </NavLink>
           <NavLink href="/settings" badge="Скоро">
             Настройки
@@ -82,6 +85,9 @@ export function Header() {
             </MobileNavLink>
             <MobileNavLink href="/admin/category-commissions" icon={<Settings className="h-4 w-4" />} onClick={() => setIsMenuOpen(false)}>
               Комиссии
+            </MobileNavLink>
+            <MobileNavLink href="/admin/shipping-tariffs" icon={<Package className="h-4 w-4" />} onClick={() => setIsMenuOpen(false)}>
+              Тарифы
             </MobileNavLink>
             <MobileNavLink href="/settings" icon={<Settings className="h-4 w-4" />} badge="Скоро" onClick={() => setIsMenuOpen(false)}>
               Настройки
