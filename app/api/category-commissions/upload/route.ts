@@ -132,13 +132,15 @@ export async function POST(request: NextRequest) {
       h.replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
     const normalizedHeaders = headers.map(normalizeHeader);
 
-    // Поиск индекса колонки по списку сигнатур
+    // Поиск индекса колонки по списку сигнатур.
+    // Важно: НЕ используем обратную проверку p.includes(header),
+    // иначе "подкатегория" ложно матчится как "категория".
     const findColumnIndex = (possibleNames: string[]): number => {
       for (let i = 0; i < headers.length; i++) {
         const header = normalizedHeaders[i];
         for (const possible of possibleNames) {
           const p = normalizeHeader(possible);
-          if (header.includes(p) || p.includes(header)) {
+          if (header === p || header.includes(p)) {
             return i;
           }
         }
