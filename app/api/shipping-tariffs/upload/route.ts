@@ -123,6 +123,7 @@ export async function POST(request: NextRequest) {
     const arrayBuffer = await file.arrayBuffer();
     let data: any[][];
     let detectedSheetName: string | null = null;
+    let detectedHeaderRows: number[] = [1];
 
     if (lowerName.endsWith(".csv")) {
       // Парсинг CSV (нужно будет добавить библиотеку для CSV)
@@ -134,18 +135,45 @@ export async function POST(request: NextRequest) {
       // Парсинг Excel
       const workbook = XLSX.read(arrayBuffer, { type: "array" });
 
-      // Ищем подходящий лист и строку заголовков:
-      // Находим строку, где одновременно встречаются "объ" и "тариф/ндс"
-      const findHeaderRowIndex = (rows: any[][]): number => {
+      // Ищем подходящий лист и строку(и) заголовков:
+      // - либо в одной строке есть и "объ", и "тариф/ндс"
+      // - либо заголовок разнесён на 2 строки (например "Тариф с" / "НДС")
+      const findHeaderRows = (rows: any[][]): { headerStart: number; headerRows: number[] } | null => {
         const maxScan = Math.min(200, rows.length);
+        const hasVolumeRow = (row: any[]) => {
+          const cells = (row || []).map((c) => String(c ?? "").toLowerCase().trim());
+          return cells.some(
+            (c) => c.includes("объ") || c.includes("обем") || c.includes("объем") || c.includes("volume")
+          );
+        };
+        const hasTariffRow = (row: any[]) => {
+          const cells = (row || []).map((c) => String(c ?? "").toLowerCase().trim());
+          return cells.some((c) => c.includes("тариф") || c.includes("ндс") || c.includes("price") || c.includes("стоим"));
+        };
+
+        // Вариант 1: оба признака в одной строке
         for (let i = 0; i < maxScan; i++) {
           const row = rows[i] || [];
-          const cells = row.map((c) => String(c ?? "").toLowerCase().trim());
-          const hasVolume = cells.some((c) => c.includes("объ") || c.includes("обем") || c.includes("объем") || c.includes("volume"));
-          const hasTariff = cells.some((c) => c.includes("тариф") || c.includes("ндс") || c.includes("price") || c.includes("стоим"));
-          if (hasVolume && hasTariff) return i;
+          if (hasVolumeRow(row) && hasTariffRow(row)) {
+            return { headerStart: i, headerRows: [i] };
+          }
         }
-        return -1;
+
+        // Вариант 2: 2 строки заголовка рядом (в пределах 3 строк)
+        let volIdx = -1;
+        let tariffIdx = -1;
+        for (let i = 0; i < maxScan; i++) {
+          if (volIdx === -1 && hasVolumeRow(rows[i] || [])) volIdx = i;
+          if (tariffIdx === -1 && hasTariffRow(rows[i] || [])) tariffIdx = i;
+          if (volIdx !== -1 && tariffIdx !== -1) break;
+        }
+        if (volIdx !== -1 && tariffIdx !== -1 && Math.abs(volIdx - tariffIdx) <= 3) {
+          const start = Math.min(volIdx, tariffIdx);
+          const end = Math.max(volIdx, tariffIdx);
+          return { headerStart: start, headerRows: start === end ? [start] : [start, end] };
+        }
+
+        return null;
       };
 
       let best: { sheetName: string; headerRowIndex: number; score: number; rows: any[][] } | null = null;
@@ -155,8 +183,9 @@ export async function POST(request: NextRequest) {
         const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as any[][];
         if (!rows || rows.length < 2) continue;
 
-        const headerRowIndex = findHeaderRowIndex(rows);
-        if (headerRowIndex === -1) continue;
+        const found = findHeaderRows(rows);
+        if (!found) continue;
+        const headerRowIndex = found.headerStart;
 
         const headerCells = (rows[headerRowIndex] || []).map((c) => String(c ?? "").toLowerCase());
         const score =
@@ -171,8 +200,11 @@ export async function POST(request: NextRequest) {
       if (best) {
         detectedSheetName = best.sheetName;
         data = best.rows;
+        // Уточняем список строк заголовка для выбранного листа (для двухстрочных заголовков)
+        const found = findHeaderRows(data);
+        detectedHeaderRows = found ? found.headerRows.map((x) => x + 1) : [best.headerRowIndex + 1];
         console.log("📋 [API] Выбран лист:", detectedSheetName);
-        console.log("📋 [API] Строка заголовков (предположительно):", best.headerRowIndex + 1);
+        console.log("📋 [API] Строки заголовков (предположительно):", detectedHeaderRows);
       } else {
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
@@ -189,25 +221,54 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Ищем строку с заголовками (может быть не первая)
-    // Сканируем больше строк и требуем наличие обоих признаков: объём и тариф/ндс
+    // Ищем строку(и) заголовков (может быть не первая; может быть 2 строки)
+    // Стратегия: найти ближайшие строки с объёмом и тарифом (в пределах 3 строк).
+    const maxScan = Math.min(200, data.length);
+    const rowHasVolume = (row: any[]) =>
+      (row || [])
+        .map((c) => String(c ?? "").toLowerCase())
+        .some((c) => c.includes("объ") || c.includes("обем") || c.includes("объем") || c.includes("volume"));
+    const rowHasTariff = (row: any[]) =>
+      (row || [])
+        .map((c) => String(c ?? "").toLowerCase())
+        .some((c) => c.includes("тариф") || c.includes("ндс") || c.includes("price") || c.includes("стоим"));
+
     let headerRowIndex = 0;
-    for (let i = 0; i < Math.min(200, data.length); i++) {
+    let headerRowIndex2: number | null = null;
+    let volIdx = -1;
+    let tariffIdx = -1;
+    for (let i = 0; i < maxScan; i++) {
       const row = data[i] || [];
-      const cells = row.map((cell: any) => String(cell ?? "").toLowerCase());
-      const hasVolume = cells.some((c) => c.includes("объ") || c.includes("обем") || c.includes("объем") || c.includes("volume"));
-      const hasTariff = cells.some((c) => c.includes("тариф") || c.includes("ндс") || c.includes("price") || c.includes("стоим"));
-      if (hasVolume && hasTariff) {
+      if (rowHasVolume(row) && rowHasTariff(row)) {
         headerRowIndex = i;
+        headerRowIndex2 = null;
+        break;
+      }
+      if (volIdx === -1 && rowHasVolume(row)) volIdx = i;
+      if (tariffIdx === -1 && rowHasTariff(row)) tariffIdx = i;
+      if (volIdx !== -1 && tariffIdx !== -1 && Math.abs(volIdx - tariffIdx) <= 3) {
+        headerRowIndex = Math.min(volIdx, tariffIdx);
+        headerRowIndex2 = Math.max(volIdx, tariffIdx);
         break;
       }
     }
 
-    const headers = data[headerRowIndex].map((h: any) => String(h || "").trim());
-    const headersLower = headers.map((h: string) => h.toLowerCase());
+    // Собираем заголовки: если 2 строки — объединяем ячейки по колонкам
+    const headerRow = data[headerRowIndex] || [];
+    const headerRow2 = headerRowIndex2 != null ? (data[headerRowIndex2] || []) : null;
+    const maxCols = Math.max(headerRow.length, headerRow2?.length || 0);
+    const headers = Array.from({ length: maxCols }, (_, col) => {
+      const a = String(headerRow[col] ?? "").trim();
+      const b = headerRow2 ? String(headerRow2[col] ?? "").trim() : "";
+      return `${a} ${b}`.trim();
+    });
+    const headersLower = headers.map((h: string) => h.toLowerCase().replace(/\s+/g, " ").trim());
 
     console.log("📋 [API] Лист:", detectedSheetName);
-    console.log("📋 [API] Строка заголовков:", headerRowIndex + 1);
+    console.log(
+      "📋 [API] Строки заголовков:",
+      headerRowIndex2 != null ? [headerRowIndex + 1, headerRowIndex2 + 1] : [headerRowIndex + 1]
+    );
     console.log("📋 [API] Заголовки файла:", headers);
 
     // Функция для поиска индекса колонки (точное совпадение или includes)
@@ -336,7 +397,10 @@ export async function POST(request: NextRequest) {
     const errors: string[] = [];
     const BATCH_SIZE = 1000; // Вставляем по 1000 записей за раз
 
-    for (let i = headerRowIndex + 1; i < data.length; i++) {
+    // Если заголовок в 2 строки — начинаем после второй строки
+    const dataStartIndex = headerRowIndex2 != null ? headerRowIndex2 + 1 : headerRowIndex + 1;
+
+    for (let i = dataStartIndex; i < data.length; i++) {
       const row = data[i];
       const rowNum = i + 1;
 
@@ -541,12 +605,13 @@ export async function POST(request: NextRequest) {
         {
           error: "Не удалось распарсить ни одного тарифа из файла",
           sheet: detectedSheetName,
-          headerRow: headerRowIndex + 1,
+          headerRow: headerRowIndex2 != null ? [headerRowIndex + 1, headerRowIndex2 + 1] : [headerRowIndex + 1],
           headers,
           foundIndices: {
             volumeRange: indices.volumeRange,
             basePrice: indices.basePrice,
           },
+          sampleRows: data.slice(dataStartIndex, Math.min(dataStartIndex + 10, data.length)),
         },
         { status: 400 }
       );

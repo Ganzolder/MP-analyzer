@@ -23,6 +23,12 @@ interface UploadResponse {
   stats?: UploadStats;
   error?: string;
   errors?: string[];
+  // debug fields (400)
+  sheet?: string | null;
+  headerRow?: number[] | number;
+  headers?: string[];
+  foundIndices?: any;
+  sampleRows?: any[];
 }
 
 interface ShippingTariff {
@@ -71,6 +77,7 @@ export default function ShippingTariffsUploadPage() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [result, setResult] = useState<UploadResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [debugError, setDebugError] = useState<any | null>(null);
 
   // Состояние для просмотра данных
   const [tariffs, setTariffs] = useState<ShippingTariff[]>([]);
@@ -85,6 +92,7 @@ export default function ShippingTariffsUploadPage() {
     setFile(selected);
     setResult(null);
     setError(null);
+    setDebugError(null);
     setUploadProgress(0);
   };
 
@@ -123,10 +131,12 @@ export default function ShippingTariffsUploadPage() {
 
       if (!response.ok) {
         setError(data.error || data.message || "Ошибка при загрузке файла.");
+        setDebugError(data);
         setResult(null);
       } else {
         setResult(data);
         setError(null);
+        setDebugError(null);
         // После успешной загрузки обновляем список
         if (data.success) {
           loadTariffs();
@@ -292,7 +302,19 @@ export default function ShippingTariffsUploadPage() {
               {error && (
                 <Alert variant="destructive">
                   <AlertTitle>Ошибка</AlertTitle>
-                  <AlertDescription>{error}</AlertDescription>
+                  <AlertDescription>
+                    <div className="space-y-2">
+                      <div>{error}</div>
+                      {debugError && (
+                        <details className="text-xs text-muted-foreground">
+                          <summary className="cursor-pointer">Детали (для отладки)</summary>
+                          <pre className="mt-2 whitespace-pre-wrap break-words bg-muted/30 p-2 rounded">
+                            {JSON.stringify(debugError, null, 2)}
+                          </pre>
+                        </details>
+                      )}
+                    </div>
+                  </AlertDescription>
                 </Alert>
               )}
 
