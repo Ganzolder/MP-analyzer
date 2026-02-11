@@ -90,7 +90,8 @@ export async function POST(request: NextRequest) {
       widthMax: findColumnIndex(["ширина макс", "ширина до", "widthmax"]),
       heightMin: findColumnIndex(["высота мин", "высота от", "heightmin"]),
       heightMax: findColumnIndex(["высота макс", "высота до", "heightmax"]),
-      basePrice: findColumnIndex(["базовая стоимость", "baseprice", "стоимость", "цена", "price", "тариф"]),
+      basePrice: findColumnIndex(["базовая стоимость", "baseprice", "стоимость", "цена", "price", "тариф", "тариф с ндс", "тариф сндс", "ндс"]),
+      volumeRange: findColumnIndex(["объём товара", "объем товара", "объём", "объем", "volume", "объём упаковки", "объем упаковки"]),
       pricePerKg: findColumnIndex(["цена за кг", "priceperkg", "за кг", "руб/кг"]),
       pricePerVolume: findColumnIndex(["цена за объём", "pricepervolume", "за объём", "руб/см³", "цена за объем"]),
       volumeMin: findColumnIndex(["объём мин", "объем мин", "объём от", "объем от", "volumemin", "volume min"]),
@@ -139,11 +140,72 @@ export async function POST(request: NextRequest) {
         return String(value).trim() || null;
       };
 
+      // Функция для парсинга диапазона объёма (например "0 - 0.200 л" или "от 190.001 л")
+      const parseVolumeRange = (value: any): { volumeMin: number | null; volumeMax: number | null } => {
+        if (value === null || value === undefined || value === "") {
+          return { volumeMin: null, volumeMax: null };
+        }
+        const str = String(value).trim().toLowerCase();
+        
+        // Убираем "л" и другие единицы измерения
+        const cleaned = str.replace(/[лl]/g, "").replace(/\s+/g, " ");
+        
+        // Парсим "от X.XXX" (например "от 190.001")
+        const fromMatch = cleaned.match(/от\s*(\d+(?:[.,]\d+)?)/);
+        if (fromMatch) {
+          const min = parseFloat(fromMatch[1].replace(",", "."));
+          return { volumeMin: min * 1000, volumeMax: null }; // Конвертируем литры в см³
+        }
+        
+        // Парсим диапазон "X - Y" или "X.XXX - Y.YYY"
+        const rangeMatch = cleaned.match(/(\d+(?:[.,]\d+)?)\s*-\s*(\d+(?:[.,]\d+)?)/);
+        if (rangeMatch) {
+          const min = parseFloat(rangeMatch[1].replace(",", "."));
+          const max = parseFloat(rangeMatch[2].replace(",", "."));
+          return { volumeMin: min * 1000, volumeMax: max * 1000 }; // Конвертируем литры в см³
+        }
+        
+        // Если просто число
+        const numMatch = cleaned.match(/(\d+(?:[.,]\d+)?)/);
+        if (numMatch) {
+          const num = parseFloat(numMatch[1].replace(",", "."));
+          return { volumeMin: num * 1000, volumeMax: num * 1000 }; // Конвертируем литры в см³
+        }
+        
+        return { volumeMin: null, volumeMax: null };
+      };
+
       try {
-        const basePrice = parseNumber(row[indices.basePrice]);
+        // Парсим базовую стоимость (тариф)
+        let basePrice = parseNumber(row[indices.basePrice]);
+        
+        // Если не нашли через parseNumber, пробуем убрать "Р" и другие символы
+        if (basePrice === null && indices.basePrice !== -1) {
+          const rawValue = row[indices.basePrice];
+          if (rawValue !== null && rawValue !== undefined) {
+            const cleaned = String(rawValue).replace(/[Рр₽]/g, "").replace(/,/g, ".").replace(/\s/g, "");
+            basePrice = parseFloat(cleaned);
+            if (isNaN(basePrice)) basePrice = null;
+          }
+        }
+        
         if (basePrice === null || basePrice < 0) {
-          errors.push(`Строка ${rowNum}: неверная базовая стоимость`);
+          errors.push(`Строка ${rowNum}: неверная базовая стоимость (значение: ${row[indices.basePrice]})`);
           continue;
+        }
+
+        // Парсим объём из диапазона (если есть колонка с диапазоном)
+        let volumeMin: number | null = null;
+        let volumeMax: number | null = null;
+        
+        if (indices.volumeRange !== -1) {
+          const volumeRange = parseVolumeRange(row[indices.volumeRange]);
+          volumeMin = volumeRange.volumeMin;
+          volumeMax = volumeRange.volumeMax;
+        } else {
+          // Если нет колонки с диапазоном, используем отдельные колонки
+          volumeMin = parseNumber(row[indices.volumeMin]);
+          volumeMax = parseNumber(row[indices.volumeMax]);
         }
 
         const tariff: any = {
@@ -162,8 +224,8 @@ export async function POST(request: NextRequest) {
           widthMax: parseNumber(row[indices.widthMax]),
           heightMin: parseNumber(row[indices.heightMin]),
           heightMax: parseNumber(row[indices.heightMax]),
-          volumeMin: parseNumber(row[indices.volumeMin]),
-          volumeMax: parseNumber(row[indices.volumeMax]),
+          volumeMin,
+          volumeMax,
           basePrice,
           pricePerKg: parseNumber(row[indices.pricePerKg]),
           pricePerVolume: parseNumber(row[indices.pricePerVolume]),
