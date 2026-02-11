@@ -2,6 +2,40 @@ import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import prisma from "@/lib/db/prisma";
 
+export const maxDuration = 300;
+
+async function ensureCategoryCommissionTable() {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "CategoryCommission" (
+      "id" TEXT NOT NULL,
+      "marketplace" TEXT NOT NULL DEFAULT 'ozon',
+      "categoryId" TEXT,
+      "categoryName" TEXT NOT NULL,
+      "categoryPath" TEXT,
+      "fulfillment" TEXT NOT NULL,
+      "commissionPercent" DOUBLE PRECISION NOT NULL,
+      "minCommissionAmount" DOUBLE PRECISION,
+      "fixedFeeAmount" DOUBLE PRECISION,
+      "isActive" BOOLEAN NOT NULL DEFAULT true,
+      "validFrom" TIMESTAMP(3),
+      "validTo" TIMESTAMP(3),
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "CategoryCommission_pkey" PRIMARY KEY ("id")
+    )
+  `;
+
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "CategoryCommission_marketplace_categoryName_fulfillment_idx"
+    ON "CategoryCommission"("marketplace", "categoryName", "fulfillment")
+  `;
+
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "CategoryCommission_marketplace_categoryId_fulfillment_idx"
+    ON "CategoryCommission"("marketplace", "categoryId", "fulfillment")
+  `;
+}
+
 /**
  * POST /api/category-commissions/upload
  * Загрузка файла с категориями и комиссиями маркетплейса (например, Ozon)
@@ -206,11 +240,23 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const dedupMap = new Map<string, (typeof records)[number]>();
+    for (const record of records) {
+      const key = [
+        record.marketplace,
+        (record.categoryId || "").toLowerCase(),
+        record.categoryName.toLowerCase(),
+        record.fulfillment.toLowerCase(),
+      ].join("|");
+      dedupMap.set(key, record);
+    }
+    const normalizedRecords = Array.from(dedupMap.values());
+
     console.log(
-      `📊 [API] Подготовлено записей комиссий: ${records.length}, ошибок: ${errors.length}`
+      `📊 [API] Подготовлено записей комиссий: ${records.length} (после дедупликации: ${normalizedRecords.length}), ошибок: ${errors.length}`
     );
 
-    if (records.length === 0) {
+    if (normalizedRecords.length === 0) {
       return NextResponse.json(
         {
           error:
@@ -221,8 +267,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // На всякий случай можно очистить старые записи по Ozon перед заливкой,
-    // если таблица полностью заменяется.
+    // Гарантируем существование таблицы и индексов перед загрузкой
+    await ensureCategoryCommissionTable();
+
+    // Очищаем старые записи
     try {
       await prisma.categoryCommission.deleteMany({
         where: {
@@ -231,20 +279,33 @@ export async function POST(request: NextRequest) {
       });
       console.log("✅ [API] Старые записи CategoryCommission для Ozon очищены");
     } catch (deleteError: any) {
-      // Если таблица не существует, это нормально (первая загрузка)
-      if (deleteError.message?.includes("does not exist") || deleteError.message?.includes("CategoryCommission")) {
-        console.log("ℹ️ [API] Таблица CategoryCommission ещё не существует, пропускаем очистку");
-      } else {
-        throw deleteError;
+      // Если таблица не существует, возвращаем понятную ошибку
+      if (
+        deleteError.message?.includes("does not exist") ||
+        deleteError.message?.includes("CategoryCommission") ||
+        deleteError.message?.includes("Unknown table") ||
+        deleteError.code === "P2021"
+      ) {
+        return NextResponse.json(
+          {
+            error: "Таблица CategoryCommission не найдена в базе данных",
+            message:
+              "Таблица не была создана автоматически. Проверьте права пользователя БД на CREATE TABLE.",
+            details:
+              "Для production рекомендуется применить миграцию из prisma/migrations/add_category_commission.sql",
+          },
+          { status: 500 }
+        );
       }
+      throw deleteError;
     }
 
-    const BATCH_SIZE = 1000;
+    const BATCH_SIZE = 3000;
     let inserted = 0;
     let failed = 0;
 
-    for (let i = 0; i < records.length; i += BATCH_SIZE) {
-      const batch = records.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < normalizedRecords.length; i += BATCH_SIZE) {
+      const batch = normalizedRecords.slice(i, i + BATCH_SIZE);
 
       try {
         await prisma.categoryCommission.createMany({
@@ -252,7 +313,7 @@ export async function POST(request: NextRequest) {
         });
         inserted += batch.length;
         console.log(
-          `✅ [API] Вставлено ${inserted}/${records.length} записей CategoryCommission`
+          `✅ [API] Вставлено ${inserted}/${normalizedRecords.length} записей CategoryCommission`
         );
       } catch (error: any) {
         console.error(
@@ -265,9 +326,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Загружено ${inserted} ставок комиссии (из ${records.length})`,
+      message: `Загружено ${inserted} ставок комиссии (из ${normalizedRecords.length})`,
       stats: {
-        total: records.length,
+        total: normalizedRecords.length,
         inserted,
         failed,
         parseErrors: errors.length,
