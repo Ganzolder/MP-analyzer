@@ -3,6 +3,70 @@ import * as XLSX from "xlsx";
 import prisma from "@/lib/db/prisma";
 import { logger } from "@/lib/utils/logger";
 
+async function ensureShippingTariffTable() {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS "ShippingTariff" (
+      "id" TEXT NOT NULL,
+      "marketplace" TEXT NOT NULL DEFAULT 'ozon',
+      "fromRegion" TEXT,
+      "toRegion" TEXT,
+      "fromCity" TEXT,
+      "toCity" TEXT,
+      "deliveryType" TEXT,
+      "deliveryMethod" TEXT,
+      "weightMin" DOUBLE PRECISION,
+      "weightMax" DOUBLE PRECISION,
+      "weightStep" DOUBLE PRECISION,
+      "lengthMin" DOUBLE PRECISION,
+      "lengthMax" DOUBLE PRECISION,
+      "widthMin" DOUBLE PRECISION,
+      "widthMax" DOUBLE PRECISION,
+      "heightMin" DOUBLE PRECISION,
+      "heightMax" DOUBLE PRECISION,
+      "volumeMin" DOUBLE PRECISION,
+      "volumeMax" DOUBLE PRECISION,
+      "basePrice" DOUBLE PRECISION NOT NULL,
+      "pricePerKg" DOUBLE PRECISION,
+      "pricePerVolume" DOUBLE PRECISION,
+      "pricePerKm" DOUBLE PRECISION,
+      "minPrice" DOUBLE PRECISION,
+      "maxPrice" DOUBLE PRECISION,
+      "category" TEXT,
+      "isActive" BOOLEAN NOT NULL DEFAULT true,
+      "priority" INTEGER NOT NULL DEFAULT 0,
+      "notes" TEXT,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "ShippingTariff_pkey" PRIMARY KEY ("id")
+    )
+  `;
+
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "ShippingTariff_marketplace_fromRegion_toRegion_idx"
+    ON "ShippingTariff"("marketplace", "fromRegion", "toRegion")
+  `;
+
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "ShippingTariff_marketplace_deliveryType_idx"
+    ON "ShippingTariff"("marketplace", "deliveryType")
+  `;
+
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "ShippingTariff_weightMin_weightMax_idx"
+    ON "ShippingTariff"("weightMin", "weightMax")
+  `;
+
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "ShippingTariff_isActive_idx"
+    ON "ShippingTariff"("isActive")
+  `;
+
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "ShippingTariff_priority_idx"
+    ON "ShippingTariff"("priority")
+  `;
+}
+
 /**
  * POST /api/shipping-tariffs/upload
  * Загрузка файла с тарифами перевозки в БД
@@ -303,14 +367,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Проверяем существование таблицы и создаём, если нужно
-    try {
-      await prisma.$executeRaw`SELECT 1 FROM "ShippingTariff" LIMIT 1`;
-    } catch (tableError: any) {
-      console.log("📋 [API] Таблица ShippingTariff не найдена, создаём...");
-      // Таблица будет создана автоматически при первой вставке через Prisma
-      // Но можно создать вручную через миграцию
-    }
+    // Гарантируем существование таблицы и индексов перед загрузкой
+    await ensureShippingTariffTable();
 
     // Вставляем в БД батчами
     let inserted = 0;
