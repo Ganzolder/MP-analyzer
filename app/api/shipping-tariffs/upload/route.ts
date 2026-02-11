@@ -303,9 +303,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Проверяем существование таблицы и создаём, если нужно
+    try {
+      await prisma.$executeRaw`SELECT 1 FROM "ShippingTariff" LIMIT 1`;
+    } catch (tableError: any) {
+      console.log("📋 [API] Таблица ShippingTariff не найдена, создаём...");
+      // Таблица будет создана автоматически при первой вставке через Prisma
+      // Но можно создать вручную через миграцию
+    }
+
     // Вставляем в БД батчами
     let inserted = 0;
     let failed = 0;
+    const insertErrors: string[] = [];
+
+    // Логируем пример первого тарифа для отладки
+    if (tariffs.length > 0) {
+      console.log("📋 [API] Пример первого тарифа:", JSON.stringify(tariffs[0], null, 2));
+    }
 
     for (let i = 0; i < tariffs.length; i += BATCH_SIZE) {
       const batch = tariffs.slice(i, i + BATCH_SIZE);
@@ -319,7 +334,27 @@ export async function POST(request: NextRequest) {
         console.log(`✅ [API] Вставлено ${inserted}/${tariffs.length} тарифов`);
       } catch (error: any) {
         console.error(`❌ [API] Ошибка при вставке батча ${i}-${i + batch.length}:`, error.message);
-        failed += batch.length;
+        console.error(`❌ [API] Детали ошибки:`, error);
+        console.error(`❌ [API] Пример данных батча:`, JSON.stringify(batch[0], null, 2));
+        
+        // Пробуем вставить по одному, чтобы найти проблемную запись
+        if (batch.length > 1) {
+          for (const tariff of batch) {
+            try {
+              await prisma.shippingTariff.create({
+                data: tariff,
+              });
+              inserted += 1;
+            } catch (singleError: any) {
+              failed += 1;
+              insertErrors.push(`Ошибка вставки: ${singleError.message}. Данные: ${JSON.stringify(tariff)}`);
+              console.error(`❌ [API] Ошибка вставки одного тарифа:`, singleError.message);
+            }
+          }
+        } else {
+          failed += batch.length;
+          insertErrors.push(`Батч ${i}: ${error.message}`);
+        }
       }
     }
 
@@ -332,7 +367,8 @@ export async function POST(request: NextRequest) {
         failed,
         errors: errors.length,
       },
-      errors: errors.slice(0, 100), // Первые 100 ошибок
+      errors: errors.slice(0, 100), // Первые 100 ошибок парсинга
+      insertErrors: insertErrors.slice(0, 50), // Первые 50 ошибок вставки
     });
   } catch (error: any) {
     console.error("❌ [API] Ошибка при загрузке тарифов:", error);
