@@ -509,14 +509,7 @@ export async function POST(request: NextRequest) {
           .replace(/[–—−]/g, "-")
           .replace(/\s+/g, " ")
           .replace(/,/g, ".");
-        
-        // Парсим "До Xл" (например "До 1л")
-        const upToMatch = normalized.match(/до\s*(\d+(?:\.\d+)?)\s*л?/i);
-        if (upToMatch) {
-          const max = parseFloat(upToMatch[1]);
-          return { volumeMin: 0, volumeMax: max * 1000 }; // Конвертируем литры в см³
-        }
-        
+
         // Парсим "Более Xл" (например "Более 1000л")
         const moreThanMatch = normalized.match(/более\s*(\d+(?:\.\d+)?)\s*л?/i);
         if (moreThanMatch) {
@@ -538,6 +531,14 @@ export async function POST(request: NextRequest) {
           const min = parseFloat(fromDashMatch[1]);
           const max = parseFloat(fromDashMatch[2]);
           return { volumeMin: min * 1000, volumeMax: max * 1000 }; // Конвертируем литры в см³
+        }
+
+        // Парсим "До Xл" (например "До 1л")
+        // Важно: матчим только если строка НАЧИНАЕТСЯ с "до", чтобы не поймать "от 1л до 2л"
+        const upToMatch = normalized.match(/^\s*до\s*(\d+(?:\.\d+)?)\s*л?/i);
+        if (upToMatch) {
+          const max = parseFloat(upToMatch[1]);
+          return { volumeMin: 0, volumeMax: max * 1000 }; // Конвертируем литры в см³
         }
         
         // Парсим "от X.XXX л" (например "от 190.001 л") - без верхней границы
