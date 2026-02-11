@@ -69,7 +69,7 @@ export default function CategoryCommissionsUploadPage() {
   const [commissionsError, setCommissionsError] = useState<string | null>(null);
   const [pagination, setPagination] = useState({ page: 1, limit: 50, total: 0, totalPages: 0 });
   const [stats, setStats] = useState<Array<{ marketplace: string; fulfillment: string; count: number }>>([]);
-  const [filters, setFilters] = useState({ marketplace: "", fulfillment: "", search: "" });
+  const [filters, setFilters] = useState({ marketplace: "all", fulfillment: "all", search: "" });
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selected = event.target.files?.[0] ?? null;
@@ -147,8 +147,8 @@ export default function CategoryCommissionsUploadPage() {
         page: page.toString(),
         limit: "50",
       });
-      if (filters.marketplace) params.append("marketplace", filters.marketplace);
-      if (filters.fulfillment) params.append("fulfillment", filters.fulfillment);
+      if (filters.marketplace && filters.marketplace !== "all") params.append("marketplace", filters.marketplace);
+      if (filters.fulfillment && filters.fulfillment !== "all") params.append("fulfillment", filters.fulfillment);
       if (filters.search) params.append("search", filters.search);
 
       const response = await fetch(`/api/category-commissions/list?${params}`);
@@ -312,7 +312,7 @@ export default function CategoryCommissionsUploadPage() {
                     <SelectValue placeholder="Все маркетплейсы" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Все маркетплейсы</SelectItem>
+                    <SelectItem value="all">Все маркетплейсы</SelectItem>
                     <SelectItem value="ozon">Ozon</SelectItem>
                   </SelectContent>
                 </Select>
@@ -327,7 +327,7 @@ export default function CategoryCommissionsUploadPage() {
                     <SelectValue placeholder="Все типы" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Все типы</SelectItem>
+                    <SelectItem value="all">Все типы</SelectItem>
                     <SelectItem value="fbo">FBO</SelectItem>
                     <SelectItem value="fbs">FBS</SelectItem>
                     <SelectItem value="rfbs">RFBS</SelectItem>
