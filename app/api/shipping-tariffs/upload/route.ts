@@ -94,6 +94,15 @@ export async function POST(request: NextRequest) {
 
     console.log("📦 [API] Начало загрузки тарифов из файла:", file.name);
 
+    // Определяем метод доставки по имени файла
+    const fileNameLower = file.name.toLowerCase();
+    let detectedDeliveryMethod: string | null = null;
+    if (fileNameLower.includes("fbo")) {
+      detectedDeliveryMethod = "fbo";
+    } else if (fileNameLower.includes("fbs")) {
+      detectedDeliveryMethod = "fbs";
+    }
+
     // Читаем файл
     const arrayBuffer = await file.arrayBuffer();
     let data: any[][];
@@ -250,28 +259,26 @@ export async function POST(request: NextRequest) {
         if (value === null || value === undefined || value === "") {
           return { volumeMin: null, volumeMax: null };
         }
-        const str = String(value).trim().toLowerCase();
+        const str = String(value).trim();
         
-        // Убираем "л" и другие единицы измерения
-        const cleaned = str.replace(/[лl]/g, "").replace(/\s+/g, " ");
-        
-        // Парсим "от X.XXX" (например "от 190.001")
-        const fromMatch = cleaned.match(/от\s*(\d+(?:[.,]\d+)?)/);
+        // Парсим "от X.XXX л" (например "от 190.001 л")
+        const fromMatch = str.match(/от\s*(\d+(?:[.,]\d+)?)\s*л/i);
         if (fromMatch) {
           const min = parseFloat(fromMatch[1].replace(",", "."));
           return { volumeMin: min * 1000, volumeMax: null }; // Конвертируем литры в см³
         }
         
-        // Парсим диапазон "X - Y" или "X.XXX - Y.YYY"
-        const rangeMatch = cleaned.match(/(\d+(?:[.,]\d+)?)\s*-\s*(\d+(?:[.,]\d+)?)/);
+        // Парсим диапазон "X - Y л" или "X.XXX - Y.YYY л" (например "0 - 0.200 л" или "0.201 - 0.400 л")
+        // Важно: ищем паттерн с дефисом и "л" в конце
+        const rangeMatch = str.match(/(\d+(?:[.,]\d+)?)\s*-\s*(\d+(?:[.,]\d+)?)\s*л/i);
         if (rangeMatch) {
           const min = parseFloat(rangeMatch[1].replace(",", "."));
           const max = parseFloat(rangeMatch[2].replace(",", "."));
           return { volumeMin: min * 1000, volumeMax: max * 1000 }; // Конвертируем литры в см³
         }
         
-        // Если просто число
-        const numMatch = cleaned.match(/(\d+(?:[.,]\d+)?)/);
+        // Если просто число с "л" в конце
+        const numMatch = str.match(/(\d+(?:[.,]\d+)?)\s*л/i);
         if (numMatch) {
           const num = parseFloat(numMatch[1].replace(",", "."));
           return { volumeMin: num * 1000, volumeMax: num * 1000 }; // Конвертируем литры в см³
@@ -317,9 +324,15 @@ export async function POST(request: NextRequest) {
         let volumeMax: number | null = null;
         
         if (indices.volumeRange !== -1) {
-          const volumeRange = parseVolumeRange(row[indices.volumeRange]);
+          const rawVolumeValue = row[indices.volumeRange];
+          const volumeRange = parseVolumeRange(rawVolumeValue);
           volumeMin = volumeRange.volumeMin;
           volumeMax = volumeRange.volumeMax;
+          
+          // Логируем для отладки первых нескольких строк
+          if (rowNum <= 3) {
+            console.log(`📋 [API] Строка ${rowNum}: объём "${rawVolumeValue}" → min: ${volumeMin}, max: ${volumeMax}`);
+          }
         } else {
           // Если нет колонки с диапазоном, используем отдельные колонки
           volumeMin = parseNumber(row[indices.volumeMin]);
@@ -333,7 +346,7 @@ export async function POST(request: NextRequest) {
           fromCity: parseString(row[indices.fromCity]) || null,
           toCity: parseString(row[indices.toCity]) || null,
           deliveryType: parseString(row[indices.deliveryType]) || null,
-          deliveryMethod: parseString(row[indices.deliveryMethod]) || null,
+          deliveryMethod: parseString(row[indices.deliveryMethod]) || detectedDeliveryMethod || null,
           weightMin: parseNumber(row[indices.weightMin]),
           weightMax: parseNumber(row[indices.weightMax]),
           lengthMin: parseNumber(row[indices.lengthMin]),

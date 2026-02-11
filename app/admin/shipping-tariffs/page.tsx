@@ -397,7 +397,7 @@ export default function ShippingTariffsUploadPage() {
                           <td className="py-3 px-2">
                             {tariff.volumeMin != null && tariff.volumeMax != null
                               ? `${(tariff.volumeMin / 1000).toFixed(3)} - ${(tariff.volumeMax / 1000).toFixed(3)} л`
-                              : tariff.volumeMin != null
+                              : tariff.volumeMin != null && tariff.volumeMax == null
                               ? `от ${(tariff.volumeMin / 1000).toFixed(3)} л`
                               : "-"}
                           </td>
