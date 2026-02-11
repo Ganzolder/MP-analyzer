@@ -75,6 +75,9 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
+    const deliveryMethodInput = String(formData.get("deliveryMethod") || "")
+      .trim()
+      .toLowerCase();
 
     if (!file) {
       return NextResponse.json(
@@ -94,13 +97,26 @@ export async function POST(request: NextRequest) {
 
     console.log("📦 [API] Начало загрузки тарифов из файла:", file.name);
 
-    // Определяем метод доставки по имени файла
+    // Определяем метод доставки: сначала из формы, затем по имени файла
     const fileNameLower = file.name.toLowerCase();
-    let detectedDeliveryMethod: string | null = null;
-    if (fileNameLower.includes("fbo")) {
+    let detectedDeliveryMethod: string | null =
+      deliveryMethodInput === "fbo" || deliveryMethodInput === "fbs"
+        ? deliveryMethodInput
+        : null;
+    if (!detectedDeliveryMethod && fileNameLower.includes("fbo")) {
       detectedDeliveryMethod = "fbo";
-    } else if (fileNameLower.includes("fbs")) {
+    } else if (!detectedDeliveryMethod && fileNameLower.includes("fbs")) {
       detectedDeliveryMethod = "fbs";
+    }
+
+    if (!detectedDeliveryMethod) {
+      return NextResponse.json(
+        {
+          error:
+            "Не удалось определить метод доставки. Выберите FBO или FBS в форме загрузки.",
+        },
+        { status: 400 }
+      );
     }
 
     // Читаем файл
@@ -260,27 +276,39 @@ export async function POST(request: NextRequest) {
           return { volumeMin: null, volumeMax: null };
         }
         const str = String(value).trim();
+        const normalized = str
+          .replace(/\u00a0/g, " ")
+          .replace(/[–—−]/g, "-")
+          .replace(/\s+/g, " ")
+          .replace(/,/g, ".");
         
         // Парсим "от X.XXX л" (например "от 190.001 л")
-        const fromMatch = str.match(/от\s*(\d+(?:[.,]\d+)?)\s*л/i);
+        const fromMatch = normalized.match(/от\s*(\d+(?:\.\d+)?)\s*л?/i);
         if (fromMatch) {
-          const min = parseFloat(fromMatch[1].replace(",", "."));
+          const min = parseFloat(fromMatch[1]);
           return { volumeMin: min * 1000, volumeMax: null }; // Конвертируем литры в см³
         }
-        
-        // Парсим диапазон "X - Y л" или "X.XXX - Y.YYY л" (например "0 - 0.200 л" или "0.201 - 0.400 л")
-        // Важно: ищем паттерн с дефисом и "л" в конце
-        const rangeMatch = str.match(/(\d+(?:[.,]\d+)?)\s*-\s*(\d+(?:[.,]\d+)?)\s*л/i);
+
+        // Парсим диапазон "X - Y л" / "X–Y л"
+        const rangeMatch = normalized.match(/(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*л?/i);
         if (rangeMatch) {
-          const min = parseFloat(rangeMatch[1].replace(",", "."));
-          const max = parseFloat(rangeMatch[2].replace(",", "."));
+          const min = parseFloat(rangeMatch[1]);
+          const max = parseFloat(rangeMatch[2]);
           return { volumeMin: min * 1000, volumeMax: max * 1000 }; // Конвертируем литры в см³
         }
-        
+
+        // Фолбэк: если есть хотя бы 2 числа, считаем их min/max
+        const allNumbers = normalized.match(/\d+(?:\.\d+)?/g);
+        if (allNumbers && allNumbers.length >= 2) {
+          const min = parseFloat(allNumbers[0]);
+          const max = parseFloat(allNumbers[1]);
+          return { volumeMin: min * 1000, volumeMax: max * 1000 };
+        }
+
         // Если просто число с "л" в конце
-        const numMatch = str.match(/(\d+(?:[.,]\d+)?)\s*л/i);
+        const numMatch = normalized.match(/(\d+(?:\.\d+)?)\s*л?/i);
         if (numMatch) {
-          const num = parseFloat(numMatch[1].replace(",", "."));
+          const num = parseFloat(numMatch[1]);
           return { volumeMin: num * 1000, volumeMax: num * 1000 }; // Конвертируем литры в см³
         }
         
@@ -346,7 +374,7 @@ export async function POST(request: NextRequest) {
           fromCity: parseString(row[indices.fromCity]) || null,
           toCity: parseString(row[indices.toCity]) || null,
           deliveryType: parseString(row[indices.deliveryType]) || null,
-          deliveryMethod: parseString(row[indices.deliveryMethod]) || detectedDeliveryMethod || null,
+          deliveryMethod: parseString(row[indices.deliveryMethod]) || detectedDeliveryMethod,
           weightMin: parseNumber(row[indices.weightMin]),
           weightMax: parseNumber(row[indices.weightMax]),
           lengthMin: parseNumber(row[indices.lengthMin]),
@@ -382,6 +410,14 @@ export async function POST(request: NextRequest) {
 
     // Гарантируем существование таблицы и индексов перед загрузкой
     await ensureShippingTariffTable();
+
+    // Перезаливаем тарифы для выбранного метода, чтобы не копились старые/ошибочные записи
+    await prisma.shippingTariff.deleteMany({
+      where: {
+        marketplace: "ozon",
+        deliveryMethod: detectedDeliveryMethod,
+      },
+    });
 
     // Вставляем в БД батчами
     let inserted = 0;

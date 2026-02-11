@@ -65,6 +65,7 @@ interface TariffsListResponse {
 
 export default function ShippingTariffsUploadPage() {
   const [file, setFile] = useState<File | null>(null);
+  const [uploadDeliveryMethod, setUploadDeliveryMethod] = useState<"fbo" | "fbs">("fbo");
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [result, setResult] = useState<UploadResponse | null>(null);
@@ -108,6 +109,7 @@ export default function ShippingTariffsUploadPage() {
     try {
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("deliveryMethod", uploadDeliveryMethod);
 
       const response = await fetch("/api/shipping-tariffs/upload", {
         method: "POST",
@@ -211,6 +213,22 @@ export default function ShippingTariffsUploadPage() {
                   <span className="font-mono">Тарифы от 300.xlsx</span>.
                   В файле должны быть колонки с объёмом упаковки и стоимостью доставки.
                 </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Метод доставки для загружаемого файла</Label>
+                <Select
+                  value={uploadDeliveryMethod}
+                  onValueChange={(value) => setUploadDeliveryMethod(value as "fbo" | "fbs")}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Выберите метод" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="fbo">FBO</SelectItem>
+                    <SelectItem value="fbs">FBS</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               {uploadProgress > 0 && (
@@ -380,7 +398,7 @@ export default function ShippingTariffsUploadPage() {
                     <thead>
                       <tr className="border-b">
                         <th className="text-left py-3 px-2 font-medium">Маркетплейс</th>
-                        <th className="text-left py-3 px-2 font-medium">Объём (см³)</th>
+                        <th className="text-left py-3 px-2 font-medium">Объём (л)</th>
                         <th className="text-left py-3 px-2 font-medium">Метод</th>
                         <th className="text-right py-3 px-2 font-medium">Стоимость (₽)</th>
                         <th className="text-left py-3 px-2 font-medium">Регион от</th>
