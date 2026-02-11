@@ -140,21 +140,40 @@ export async function POST(request: NextRequest) {
       // - либо заголовок разнесён на 2 строки (например "Тариф с" / "НДС")
       const findHeaderRows = (rows: any[][]): { headerStart: number; headerRows: number[] } | null => {
         const maxScan = Math.min(200, rows.length);
-        const hasVolumeRow = (row: any[]) => {
+        const getVolumeCols = (row: any[]) => {
           const cells = (row || []).map((c) => String(c ?? "").toLowerCase().trim());
-          return cells.some(
-            (c) => c.includes("объ") || c.includes("обем") || c.includes("объем") || c.includes("volume")
-          );
+          const cols: number[] = [];
+          for (let i = 0; i < cells.length; i++) {
+            const c = cells[i];
+            if (c.includes("объ") || c.includes("обем") || c.includes("объем") || c.includes("volume")) cols.push(i);
+          }
+          return cols;
         };
-        const hasTariffRow = (row: any[]) => {
+        const getTariffCols = (row: any[]) => {
           const cells = (row || []).map((c) => String(c ?? "").toLowerCase().trim());
-          return cells.some((c) => c.includes("тариф") || c.includes("ндс") || c.includes("price") || c.includes("стоим"));
+          const cols: number[] = [];
+          for (let i = 0; i < cells.length; i++) {
+            const c = cells[i];
+            // Важно: не используем "стоим", чтобы не спутать с информационной строкой ("стоимость доставки ...")
+            if (c.includes("тариф") || c.includes("ндс") || c.includes("price")) cols.push(i);
+          }
+          return cols;
+        };
+        const nonEmptyCount = (row: any[]) =>
+          (row || []).map((c) => String(c ?? "").trim()).filter((c) => c.length > 0).length;
+        const isStrongHeaderRow = (row: any[]) => {
+          if (nonEmptyCount(row) < 2) return false;
+          const v = getVolumeCols(row);
+          const t = getTariffCols(row);
+          if (v.length === 0 || t.length === 0) return false;
+          // Сильный признак: объём и тариф находятся в разных ячейках
+          return v.some((vi) => t.some((ti) => ti !== vi));
         };
 
         // Вариант 1: оба признака в одной строке
         for (let i = 0; i < maxScan; i++) {
           const row = rows[i] || [];
-          if (hasVolumeRow(row) && hasTariffRow(row)) {
+          if (isStrongHeaderRow(row)) {
             return { headerStart: i, headerRows: [i] };
           }
         }
@@ -163,8 +182,8 @@ export async function POST(request: NextRequest) {
         let volIdx = -1;
         let tariffIdx = -1;
         for (let i = 0; i < maxScan; i++) {
-          if (volIdx === -1 && hasVolumeRow(rows[i] || [])) volIdx = i;
-          if (tariffIdx === -1 && hasTariffRow(rows[i] || [])) tariffIdx = i;
+          if (volIdx === -1 && getVolumeCols(rows[i] || []).length > 0) volIdx = i;
+          if (tariffIdx === -1 && getTariffCols(rows[i] || []).length > 0) tariffIdx = i;
           if (volIdx !== -1 && tariffIdx !== -1) break;
         }
         if (volIdx !== -1 && tariffIdx !== -1 && Math.abs(volIdx - tariffIdx) <= 3) {
@@ -225,13 +244,16 @@ export async function POST(request: NextRequest) {
     // Стратегия: найти ближайшие строки с объёмом и тарифом (в пределах 3 строк).
     const maxScan = Math.min(200, data.length);
     const rowHasVolume = (row: any[]) =>
-      (row || [])
-        .map((c) => String(c ?? "").toLowerCase())
-        .some((c) => c.includes("объ") || c.includes("обем") || c.includes("объем") || c.includes("volume"));
+      (row || []).map((c) => String(c ?? "").toLowerCase()).reduce<number[]>((acc, c, idx) => {
+        if (c.includes("объ") || c.includes("обем") || c.includes("объем") || c.includes("volume")) acc.push(idx);
+        return acc;
+      }, []);
     const rowHasTariff = (row: any[]) =>
-      (row || [])
-        .map((c) => String(c ?? "").toLowerCase())
-        .some((c) => c.includes("тариф") || c.includes("ндс") || c.includes("price") || c.includes("стоим"));
+      (row || []).map((c) => String(c ?? "").toLowerCase()).reduce<number[]>((acc, c, idx) => {
+        // Важно: не используем "стоим", чтобы не спутать с информационной строкой
+        if (c.includes("тариф") || c.includes("ндс") || c.includes("price")) acc.push(idx);
+        return acc;
+      }, []);
 
     let headerRowIndex = 0;
     let headerRowIndex2: number | null = null;
@@ -239,13 +261,16 @@ export async function POST(request: NextRequest) {
     let tariffIdx = -1;
     for (let i = 0; i < maxScan; i++) {
       const row = data[i] || [];
-      if (rowHasVolume(row) && rowHasTariff(row)) {
+      const vCols = rowHasVolume(row);
+      const tCols = rowHasTariff(row);
+      const nonEmpty = row.map((c: any) => String(c ?? "").trim()).filter((c: string) => c.length > 0).length;
+      if (nonEmpty >= 2 && vCols.length > 0 && tCols.length > 0 && vCols.some((v) => tCols.some((t) => t !== v))) {
         headerRowIndex = i;
         headerRowIndex2 = null;
         break;
       }
-      if (volIdx === -1 && rowHasVolume(row)) volIdx = i;
-      if (tariffIdx === -1 && rowHasTariff(row)) tariffIdx = i;
+      if (volIdx === -1 && vCols.length > 0) volIdx = i;
+      if (tariffIdx === -1 && tCols.length > 0) tariffIdx = i;
       if (volIdx !== -1 && tariffIdx !== -1 && Math.abs(volIdx - tariffIdx) <= 3) {
         headerRowIndex = Math.min(volIdx, tariffIdx);
         headerRowIndex2 = Math.max(volIdx, tariffIdx);
@@ -275,6 +300,7 @@ export async function POST(request: NextRequest) {
     const findColumnIndex = (possibleNames: string[]): number => {
       for (let i = 0; i < headersLower.length; i++) {
         const header = headersLower[i];
+        if (!header || header.trim().length === 0) continue; // не матчим пустые заголовки
         for (const possible of possibleNames) {
           const possibleLower = possible.toLowerCase();
           // Сначала проверяем точное совпадение (без учета регистра)
@@ -282,7 +308,7 @@ export async function POST(request: NextRequest) {
             return i;
           }
           // Потом проверяем includes
-          if (header.includes(possibleLower) || possibleLower.includes(header)) {
+          if (header.includes(possibleLower)) {
             return i;
           }
         }
@@ -310,12 +336,13 @@ export async function POST(request: NextRequest) {
       for (let i = 0; i < headersLower.length; i++) {
         if (i === excludeIndex) continue; // Пропускаем исключённую колонку
         const header = headersLower[i];
+        if (!header || header.trim().length === 0) continue; // не матчим пустые заголовки
         for (const possible of possibleNames) {
           const possibleLower = possible.toLowerCase();
           if (header === possibleLower) {
             return i;
           }
-          if (header.includes(possibleLower) || possibleLower.includes(header)) {
+          if (header.includes(possibleLower)) {
             return i;
           }
         }
