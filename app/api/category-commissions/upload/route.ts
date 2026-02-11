@@ -215,7 +215,7 @@ export async function POST(request: NextRequest) {
       // Для каждой колонки со ставкой создаём отдельную запись CategoryCommission
       for (const col of fulfillmentColumns) {
         const rawValue = row[col.index];
-        const percent = parseNumber(rawValue);
+        let percent = parseNumber(rawValue);
 
         if (percent === null) {
           continue;
@@ -224,6 +224,13 @@ export async function POST(request: NextRequest) {
         if (percent <= 0) {
           // Нулевые или отрицательные значения считаем невалидными ставками
           continue;
+        }
+
+        // Если процент записан как десятичная дробь (например, 0.14 вместо 14),
+        // умножаем на 100 для преобразования в проценты
+        if (percent < 1 && percent > 0) {
+          percent = percent * 100;
+          console.log(`[API] Преобразовано ${rawValue} → ${percent}% (строка ${rowNum}, ${col.type})`);
         }
 
         records.push({
