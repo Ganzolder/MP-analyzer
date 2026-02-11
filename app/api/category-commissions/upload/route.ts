@@ -11,13 +11,22 @@ async function ensureCategoryCommissionTable() {
       "marketplace" TEXT NOT NULL DEFAULT 'ozon',
       "categoryId" TEXT,
       "categoryName" TEXT NOT NULL,
-      "categoryPath" TEXT,
       "productType" TEXT,
-      "fulfillment" TEXT NOT NULL,
-      "priceMin" DOUBLE PRECISION,
-      "priceMax" DOUBLE PRECISION,
-      "tierLabel" TEXT,
-      "commissionPercent" DOUBLE PRECISION NOT NULL,
+      "categoryPath" TEXT,
+      "fboUpTo100" DOUBLE PRECISION,
+      "fbo100To300" DOUBLE PRECISION,
+      "fbo300To500" DOUBLE PRECISION,
+      "fbo500To1500" DOUBLE PRECISION,
+      "fboOver1500" DOUBLE PRECISION,
+      "fboFreshUpTo100" DOUBLE PRECISION,
+      "fboFresh100To300" DOUBLE PRECISION,
+      "fboFreshOver300" DOUBLE PRECISION,
+      "fbsUpTo100" DOUBLE PRECISION,
+      "fbs100To300" DOUBLE PRECISION,
+      "fbsOver300" DOUBLE PRECISION,
+      "rfbs" DOUBLE PRECISION,
+      "fulfillment" TEXT NOT NULL DEFAULT 'matrix',
+      "commissionPercent" DOUBLE PRECISION NOT NULL DEFAULT 0,
       "minCommissionAmount" DOUBLE PRECISION,
       "fixedFeeAmount" DOUBLE PRECISION,
       "isActive" BOOLEAN NOT NULL DEFAULT true,
@@ -31,28 +40,39 @@ async function ensureCategoryCommissionTable() {
 
   // Мягкое обновление схемы (если таблица была создана старой версией)
   await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "productType" TEXT`;
-  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "priceMin" DOUBLE PRECISION`;
-  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "priceMax" DOUBLE PRECISION`;
-  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "tierLabel" TEXT`;
+  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "fboUpTo100" DOUBLE PRECISION`;
+  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "fbo100To300" DOUBLE PRECISION`;
+  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "fbo300To500" DOUBLE PRECISION`;
+  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "fbo500To1500" DOUBLE PRECISION`;
+  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "fboOver1500" DOUBLE PRECISION`;
+  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "fboFreshUpTo100" DOUBLE PRECISION`;
+  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "fboFresh100To300" DOUBLE PRECISION`;
+  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "fboFreshOver300" DOUBLE PRECISION`;
+  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "fbsUpTo100" DOUBLE PRECISION`;
+  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "fbs100To300" DOUBLE PRECISION`;
+  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "fbsOver300" DOUBLE PRECISION`;
+  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "rfbs" DOUBLE PRECISION`;
+  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "fulfillment" TEXT NOT NULL DEFAULT 'matrix'`;
+  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "commissionPercent" DOUBLE PRECISION NOT NULL DEFAULT 0`;
 
   await prisma.$executeRaw`
-    CREATE INDEX IF NOT EXISTS "CategoryCommission_marketplace_categoryName_fulfillment_idx"
-    ON "CategoryCommission"("marketplace", "categoryName", "fulfillment")
+    CREATE INDEX IF NOT EXISTS "CategoryCommission_marketplace_categoryName_idx"
+    ON "CategoryCommission"("marketplace", "categoryName")
   `;
 
   await prisma.$executeRaw`
-    CREATE INDEX IF NOT EXISTS "CategoryCommission_marketplace_categoryId_fulfillment_idx"
-    ON "CategoryCommission"("marketplace", "categoryId", "fulfillment")
+    CREATE INDEX IF NOT EXISTS "CategoryCommission_marketplace_categoryId_idx"
+    ON "CategoryCommission"("marketplace", "categoryId")
   `;
 
   await prisma.$executeRaw`
-    CREATE INDEX IF NOT EXISTS "CategoryCommission_marketplace_categoryPath_fulfillment_idx"
-    ON "CategoryCommission"("marketplace", "categoryPath", "fulfillment")
+    CREATE INDEX IF NOT EXISTS "CategoryCommission_marketplace_categoryPath_idx"
+    ON "CategoryCommission"("marketplace", "categoryPath")
   `;
 
   await prisma.$executeRaw`
-    CREATE INDEX IF NOT EXISTS "CategoryCommission_marketplace_fulfillment_priceMin_priceMax_idx"
-    ON "CategoryCommission"("marketplace", "fulfillment", "priceMin", "priceMax")
+    CREATE INDEX IF NOT EXISTS "CategoryCommission_marketplace_productType_idx"
+    ON "CategoryCommission"("marketplace", "productType")
   `;
 }
 
@@ -104,18 +124,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const headers = data[0].map((h: any) =>
-      String(h || "").toLowerCase().trim()
-    );
+    const headers = data[0].map((h: any) => String(h || ""));
 
-    console.log("📋 [API] Заголовки файла категорий:", headers);
+    console.log("📋 [API] Заголовки файла категорий:", headers.map((h) => h.toLowerCase().trim()));
 
-    // Поиск индекса колонки по возможным названиям
+    const normalizeHeader = (h: string) =>
+      h.replace(/\r?\n/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+    const normalizedHeaders = headers.map(normalizeHeader);
+
+    // Поиск индекса колонки по списку сигнатур
     const findColumnIndex = (possibleNames: string[]): number => {
       for (let i = 0; i < headers.length; i++) {
-        const header = headers[i];
+        const header = normalizedHeaders[i];
         for (const possible of possibleNames) {
-          if (header.includes(possible) || possible.includes(header)) {
+          const p = normalizeHeader(possible);
+          if (header.includes(p) || p.includes(header)) {
             return i;
           }
         }
@@ -124,128 +147,58 @@ export async function POST(request: NextRequest) {
     };
 
     // Основные колонки
-    const idxCategoryName = findColumnIndex([
+    const idxCategory = findColumnIndex([
       "категория",
       "наименование категории",
       "категория товара",
-    ]);
-    const idxCategoryPath = findColumnIndex([
-      "путь категории",
-      "полная категория",
-      "иерархия категорий",
-    ]);
-    const idxCategoryId = findColumnIndex([
-      "id категории",
-      "идентификатор категории",
-      "код категории",
-      "category id",
     ]);
     const idxProductType = findColumnIndex([
       "тип товара",
       "подкатегория",
       "вид товара",
-      "тип",
     ]);
+    const idxFboUpTo100 = findColumnIndex(["fbo до 100 руб"]);
+    const idxFbo100To300 = findColumnIndex(["fbo свыше 100 до 300 руб"]);
+    const idxFbo300To500 = findColumnIndex(["fbo свыше 300 до 500 руб"]);
+    const idxFbo500To1500 = findColumnIndex(["fbo свыше 500 до 1500 руб"]);
+    const idxFboOver1500 = findColumnIndex(["fbo свыше 1500 руб"]);
+    const idxFboFreshUpTo100 = findColumnIndex(["fbo fresh до 100 руб", "fbo freshдо 100 руб"]);
+    const idxFboFresh100To300 = findColumnIndex(["fbo fresh свыше 100 до 300 руб"]);
+    const idxFboFreshOver300 = findColumnIndex(["fbo fresh свыше 300 руб"]);
+    const idxFbsUpTo100 = findColumnIndex(["fbs до 100 руб"]);
+    const idxFbs100To300 = findColumnIndex(["fbs свыше 100 до 300 руб"]);
+    const idxFbsOver300 = findColumnIndex(["fbs свыше 300 руб"]);
+    const idxRfbs = findColumnIndex(["rfbs"]);
 
-    if (idxCategoryName === -1) {
+    if (idxCategory === -1) {
       return NextResponse.json(
         {
           error:
-            "Не найдена колонка с названием категории. Ожидается что-то вроде 'Категория', 'Наименование категории' или 'Категория товара'.",
+            "Не найдена колонка 'Категория'.",
         },
         { status: 400 }
       );
     }
-
-    // Колонки ставок: в файлах Ozon часто есть много колонок FBO/FBS с диапазонами цен.
-    // Собираем ВСЕ подходящие колонки, а не только одну.
-    type CommissionColumn = {
-      fulfillment: string; // fbo, fbo_fresh, fbs, rfbs
-      index: number;
-      priceMin: number | null;
-      priceMax: number | null;
-      tierLabel: string;
-    };
-
-    const normalizeHeader = (h: string) =>
-      h
-        .replace(/\r?\n/g, " ")
-        .replace(/\s+/g, " ")
-        .trim()
-        .toLowerCase();
-
-    const parseRubRange = (
-      header: string
-    ): { priceMin: number | null; priceMax: number | null } => {
-      const h = normalizeHeader(header);
-
-      const toNum = (s: string) => parseFloat(s.replace(",", "."));
-
-      // "до 100 руб."
-      let m = h.match(/до\s*(\d+(?:[.,]\d+)?)\s*руб/);
-      if (m) {
-        return { priceMin: 0, priceMax: toNum(m[1]) };
-      }
-
-      // "свыше 100 до 300 руб."
-      m = h.match(/свыше\s*(\d+(?:[.,]\d+)?)\s*(?:руб\.?)?\s*до\s*(\d+(?:[.,]\d+)?)\s*руб/);
-      if (m) {
-        return { priceMin: toNum(m[1]), priceMax: toNum(m[2]) };
-      }
-
-      // "свыше 1500 руб."
-      m = h.match(/свыше\s*(\d+(?:[.,]\d+)?)\s*руб/);
-      if (m) {
-        return { priceMin: toNum(m[1]), priceMax: null };
-      }
-
-      return { priceMin: null, priceMax: null };
-    };
-
-    const commissionColumns: CommissionColumn[] = [];
-
-    for (let i = 0; i < headers.length; i++) {
-      const raw = String(data[0][i] ?? "");
-      const h = normalizeHeader(raw);
-      if (!h) continue;
-
-      // пропускаем не-колонки комиссий
-      if (
-        h.includes("категор") ||
-        h.includes("наименование") ||
-        h.includes("путь") ||
-        h.includes("иерарх") ||
-        h.includes("код") ||
-        h.includes("id ") ||
-        h === "id" ||
-        h.includes("тип товара")
-      ) {
-        continue;
-      }
-
-      let fulfillment: string | null = null;
-      if (h.includes("rfbs")) fulfillment = "rfbs";
-      else if (h.includes("fbo fresh")) fulfillment = "fbo_fresh";
-      else if (h.startsWith("fbo") || h.includes(" fbo")) fulfillment = "fbo";
-      else if (h.startsWith("fbs") || h.includes(" fbs")) fulfillment = "fbs";
-
-      if (!fulfillment) continue;
-
-      const { priceMin, priceMax } = parseRubRange(raw);
-      commissionColumns.push({
-        fulfillment,
-        index: i,
-        priceMin,
-        priceMax,
-        tierLabel: normalizeHeader(raw),
-      });
-    }
-
-    if (commissionColumns.length === 0) {
+    const requiredColumns = [
+      ["Тип товара", idxProductType],
+      ["FBO до 100 руб.", idxFboUpTo100],
+      ["FBO свыше 100 до 300 руб.", idxFbo100To300],
+      ["FBO свыше 300 до 500 руб.", idxFbo300To500],
+      ["FBO свыше 500 до 1500 руб.", idxFbo500To1500],
+      ["FBO свыше 1500 руб.", idxFboOver1500],
+      ["FBO Fresh до 100 руб.", idxFboFreshUpTo100],
+      ["FBO Fresh свыше 100 до 300 руб.", idxFboFresh100To300],
+      ["FBO Fresh свыше 300 руб.", idxFboFreshOver300],
+      ["FBS до 100 руб.", idxFbsUpTo100],
+      ["FBS свыше 100 до 300 руб.", idxFbs100To300],
+      ["FBS свыше 300 руб.", idxFbsOver300],
+      ["RFBS", idxRfbs],
+    ] as const;
+    const missing = requiredColumns.filter(([, idx]) => idx === -1).map(([name]) => name);
+    if (missing.length > 0) {
       return NextResponse.json(
         {
-          error:
-            "Не найдены колонки со ставками комиссии (FBO/FBS/RFBS). Проверьте заголовки файла.",
+          error: `В файле не найдены обязательные колонки: ${missing.join(", ")}`,
         },
         { status: 400 }
       );
@@ -268,10 +221,17 @@ export async function POST(request: NextRequest) {
       const s = String(value).trim();
       return s || null;
     };
+    const parsePercent = (value: any): number | null => {
+      const parsed = parseNumber(value);
+      if (parsed === null) return null;
+      if (parsed <= 0) return null;
+      return parsed < 1 ? parsed * 100 : parsed;
+    };
 
     const records: any[] = [];
     const errors: string[] = [];
     let lastCategoryGroup: string | null = null;
+    let lastProductType: string | null = null;
     let rowsTotal = 0;
     let rowsProcessed = 0;
 
@@ -291,7 +251,7 @@ export async function POST(request: NextRequest) {
 
       rowsTotal += 1;
 
-      const rawCategoryGroup = parseString(row[idxCategoryName]);
+      const rawCategoryGroup = parseString(row[idxCategory]);
       const categoryGroup = rawCategoryGroup || lastCategoryGroup;
       if (!categoryGroup) {
         // В Excel часто "Категория" объединена (merged) и заполнена только в первой строке блока.
@@ -303,76 +263,83 @@ export async function POST(request: NextRequest) {
         lastCategoryGroup = rawCategoryGroup;
       }
 
-      const fileCategoryPath = idxCategoryPath !== -1
-        ? parseString(row[idxCategoryPath])
-        : null;
-      const categoryId = idxCategoryId !== -1
-        ? parseString(row[idxCategoryId])
-        : null;
-      const productType = idxProductType !== -1
-        ? parseString(row[idxProductType])
-        : null;
+      const rawProductType = parseString(row[idxProductType]);
+      const productType = rawProductType || lastProductType;
+      if (rawProductType) {
+        lastProductType = rawProductType;
+      }
+
+      const fboUpTo100 = parsePercent(row[idxFboUpTo100]);
+      const fbo100To300 = parsePercent(row[idxFbo100To300]);
+      const fbo300To500 = parsePercent(row[idxFbo300To500]);
+      const fbo500To1500 = parsePercent(row[idxFbo500To1500]);
+      const fboOver1500 = parsePercent(row[idxFboOver1500]);
+      const fboFreshUpTo100 = parsePercent(row[idxFboFreshUpTo100]);
+      const fboFresh100To300 = parsePercent(row[idxFboFresh100To300]);
+      const fboFreshOver300 = parsePercent(row[idxFboFreshOver300]);
+      const fbsUpTo100 = parsePercent(row[idxFbsUpTo100]);
+      const fbs100To300 = parsePercent(row[idxFbs100To300]);
+      const fbsOver300 = parsePercent(row[idxFbsOver300]);
+      const rfbs = parsePercent(row[idxRfbs]);
+
+      const hasAnyRate = [
+        fboUpTo100,
+        fbo100To300,
+        fbo300To500,
+        fbo500To1500,
+        fboOver1500,
+        fboFreshUpTo100,
+        fboFresh100To300,
+        fboFreshOver300,
+        fbsUpTo100,
+        fbs100To300,
+        fbsOver300,
+        rfbs,
+      ].some((v) => v !== null);
+
+      if (!hasAnyRate) {
+        continue;
+      }
 
       rowsProcessed += 1;
 
-      // Нормализуем на "самый конкретный" путь:
-      // categoryPath = "Категория / Тип товара" (если есть)
       const fullPath = productType
         ? `${categoryGroup} / ${productType}`
-        : (fileCategoryPath || categoryGroup);
-      const categoryName = productType || categoryGroup;
+        : categoryGroup;
 
-      // Для каждой колонки со ставкой создаём отдельную запись CategoryCommission
-      for (const col of commissionColumns) {
-        const rawValue = row[col.index];
-        let percent = parseNumber(rawValue);
-
-        if (percent === null) {
-          continue;
-        }
-
-        if (percent <= 0) {
-          // Нулевые или отрицательные значения считаем невалидными ставками
-          continue;
-        }
-
-        // Если процент записан как десятичная дробь (например, 0.14 вместо 14),
-        // умножаем на 100 для преобразования в проценты
-        if (percent < 1 && percent > 0) {
-          percent = percent * 100;
-          console.log(
-            `[API] Преобразовано ${rawValue} → ${percent}% (строка ${rowNum}, ${col.fulfillment})`
-          );
-        }
-
-        records.push({
-          marketplace: "ozon",
-          categoryId,
-          categoryName,
-          categoryPath: fullPath,
-          productType,
-          fulfillment: col.fulfillment,
-          priceMin: col.priceMin,
-          priceMax: col.priceMax,
-          tierLabel: col.tierLabel,
-          commissionPercent: percent,
-          minCommissionAmount: null,
-          fixedFeeAmount: null,
-          isActive: true,
-        });
-      }
+      records.push({
+        marketplace: "ozon",
+        categoryId: null,
+        categoryName: categoryGroup,
+        productType: productType || null,
+        categoryPath: fullPath,
+        fboUpTo100,
+        fbo100To300,
+        fbo300To500,
+        fbo500To1500,
+        fboOver1500,
+        fboFreshUpTo100,
+        fboFresh100To300,
+        fboFreshOver300,
+        fbsUpTo100,
+        fbs100To300,
+        fbsOver300,
+        rfbs,
+        fulfillment: "matrix",
+        commissionPercent: fboUpTo100 || fbsUpTo100 || rfbs || 0,
+        minCommissionAmount: null,
+        fixedFeeAmount: null,
+        isActive: true,
+      });
     }
 
     const dedupMap = new Map<string, (typeof records)[number]>();
     for (const record of records) {
       const key = [
         record.marketplace,
-        (record.categoryId || "").toLowerCase(),
         record.categoryName.toLowerCase(),
+        (record.productType || "").toLowerCase(),
         (record.categoryPath || "").toLowerCase(),
-        record.fulfillment.toLowerCase(),
-        String(record.priceMin ?? ""),
-        String(record.priceMax ?? ""),
       ].join("|");
       dedupMap.set(key, record);
     }
@@ -386,7 +353,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           error:
-            "Не удалось извлечь ни одной валидной ставки комиссии из файла. Проверьте, что в колонках FBO/FBS/RFBS есть числовые значения.",
+            "Не удалось извлечь ни одной валидной строки матрицы комиссии из файла.",
           errors: errors.slice(0, 50),
         },
         { status: 400 }
@@ -452,7 +419,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Обработано строк: ${rowsProcessed}/${rowsTotal}. Загружено ставок комиссии: ${inserted} (из ${normalizedRecords.length})`,
+      message: `Обработано строк: ${rowsProcessed}/${rowsTotal}. Загружено строк матрицы: ${inserted} (из ${normalizedRecords.length})`,
       stats: {
         total: normalizedRecords.length,
         inserted,

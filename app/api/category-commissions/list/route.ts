@@ -11,7 +11,6 @@ export async function GET(request: NextRequest) {
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "50");
     const marketplace = searchParams.get("marketplace") || undefined;
-    const fulfillment = searchParams.get("fulfillment") || undefined;
     const search = searchParams.get("search") || undefined;
 
     const skip = (page - 1) * limit;
@@ -21,12 +20,10 @@ export async function GET(request: NextRequest) {
     if (marketplace) {
       where.marketplace = marketplace;
     }
-    if (fulfillment) {
-      where.fulfillment = fulfillment;
-    }
     if (search) {
       where.OR = [
         { categoryName: { contains: search, mode: "insensitive" } },
+        { productType: { contains: search, mode: "insensitive" } },
         { categoryPath: { contains: search, mode: "insensitive" } },
         { categoryId: { contains: search, mode: "insensitive" } },
       ];
@@ -40,11 +37,8 @@ export async function GET(request: NextRequest) {
         take: limit,
         orderBy: [
           { marketplace: "asc" },
-          { fulfillment: "asc" },
           { categoryPath: "asc" },
           { categoryName: "asc" },
-          { priceMin: "asc" },
-          { priceMax: "asc" },
         ],
       }),
       prisma.categoryCommission.count({ where }),
@@ -52,7 +46,7 @@ export async function GET(request: NextRequest) {
 
     // Получаем статистику
     const stats = await prisma.categoryCommission.groupBy({
-      by: ["marketplace", "fulfillment"],
+      by: ["marketplace"],
       _count: true,
     });
 
@@ -67,7 +61,6 @@ export async function GET(request: NextRequest) {
       },
       stats: stats.map((s) => ({
         marketplace: s.marketplace,
-        fulfillment: s.fulfillment,
         count: s._count,
       })),
     });

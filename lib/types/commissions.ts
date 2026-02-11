@@ -17,9 +17,20 @@ export interface CategoryCommissionRecord {
   marketplace: Marketplace;
   categoryId?: string | null;
   categoryName: string;
+  productType?: string | null;
   categoryPath?: string | null;
-  fulfillment: FulfillmentType | string;
-  commissionPercent: number;
+  fboUpTo100?: number | null;
+  fbo100To300?: number | null;
+  fbo300To500?: number | null;
+  fbo500To1500?: number | null;
+  fboOver1500?: number | null;
+  fboFreshUpTo100?: number | null;
+  fboFresh100To300?: number | null;
+  fboFreshOver300?: number | null;
+  fbsUpTo100?: number | null;
+  fbs100To300?: number | null;
+  fbsOver300?: number | null;
+  rfbs?: number | null;
   minCommissionAmount?: number | null;
   fixedFeeAmount?: number | null;
   isActive: boolean;
@@ -33,6 +44,6 @@ export interface CategoryCommissionSearchParams {
   marketplace: Marketplace;
   categoryId?: string;
   categoryName?: string;
-  fulfillment: FulfillmentType | string;
+  productType?: string;
 }
 

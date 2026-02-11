@@ -16,6 +16,8 @@ interface UploadStats {
   failed: number;
   parseErrors: number;
   parseErrorsSample?: string[];
+  rowsTotal?: number;
+  rowsProcessed?: number;
 }
 
 interface UploadResponse {
@@ -32,11 +34,18 @@ interface CategoryCommission {
   categoryName: string;
   categoryPath: string | null;
   productType?: string | null;
-  fulfillment: string;
-  priceMin?: number | null;
-  priceMax?: number | null;
-  tierLabel?: string | null;
-  commissionPercent: number;
+  fboUpTo100?: number | null;
+  fbo100To300?: number | null;
+  fbo300To500?: number | null;
+  fbo500To1500?: number | null;
+  fboOver1500?: number | null;
+  fboFreshUpTo100?: number | null;
+  fboFresh100To300?: number | null;
+  fboFreshOver300?: number | null;
+  fbsUpTo100?: number | null;
+  fbs100To300?: number | null;
+  fbsOver300?: number | null;
+  rfbs?: number | null;
   minCommissionAmount: number | null;
   fixedFeeAmount: number | null;
   isActive: boolean;
@@ -55,7 +64,6 @@ interface CommissionsListResponse {
   };
   stats: Array<{
     marketplace: string;
-    fulfillment: string;
     count: number;
   }>;
 }
@@ -72,8 +80,8 @@ export default function CategoryCommissionsUploadPage() {
   const [isLoadingCommissions, setIsLoadingCommissions] = useState(false);
   const [commissionsError, setCommissionsError] = useState<string | null>(null);
   const [pagination, setPagination] = useState({ page: 1, limit: 50, total: 0, totalPages: 0 });
-  const [stats, setStats] = useState<Array<{ marketplace: string; fulfillment: string; count: number }>>([]);
-  const [filters, setFilters] = useState({ marketplace: "all", fulfillment: "all", search: "" });
+  const [stats, setStats] = useState<Array<{ marketplace: string; count: number }>>([]);
+  const [filters, setFilters] = useState({ marketplace: "all", search: "" });
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selected = event.target.files?.[0] ?? null;
@@ -152,7 +160,6 @@ export default function CategoryCommissionsUploadPage() {
         limit: "50",
       });
       if (filters.marketplace && filters.marketplace !== "all") params.append("marketplace", filters.marketplace);
-      if (filters.fulfillment && filters.fulfillment !== "all") params.append("fulfillment", filters.fulfillment);
       if (filters.search) params.append("search", filters.search);
 
       const response = await fetch(`/api/category-commissions/list?${params}`);
@@ -181,7 +188,7 @@ export default function CategoryCommissionsUploadPage() {
   // Обновляем при изменении фильтров
   useEffect(() => {
     loadCommissions(1);
-  }, [filters.marketplace, filters.fulfillment, filters.search]);
+  }, [filters.marketplace, filters.search]);
 
   return (
     <div className="container mx-auto py-8 px-4">
@@ -240,8 +247,14 @@ export default function CategoryCommissionsUploadPage() {
                       {result.stats && (
                         <>
                           <p>
-                            Всего строк: <strong>{result.stats.total}</strong>
+                            Всего строк в базе: <strong>{result.stats.total}</strong>
                           </p>
+                          {result.stats.rowsTotal !== undefined && (
+                            <p>
+                              Обработано строк файла: <strong>{result.stats.rowsProcessed ?? 0}</strong> из{" "}
+                              <strong>{result.stats.rowsTotal}</strong>
+                            </p>
+                          )}
                           <p>
                             Сохранено в БД: <strong>{result.stats.inserted}</strong>
                             {result.stats.failed > 0 && (
@@ -305,7 +318,7 @@ export default function CategoryCommissionsUploadPage() {
           </CardHeader>
           <CardContent>
             {/* Фильтры */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
               <div className="space-y-2">
                 <Label>Маркетплейс</Label>
                 <Select
@@ -318,24 +331,6 @@ export default function CategoryCommissionsUploadPage() {
                   <SelectContent>
                     <SelectItem value="all">Все маркетплейсы</SelectItem>
                     <SelectItem value="ozon">Ozon</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Тип размещения</Label>
-                <Select
-                  value={filters.fulfillment}
-                  onValueChange={(value) => setFilters({ ...filters, fulfillment: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Все типы" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Все типы</SelectItem>
-                    <SelectItem value="fbo">FBO</SelectItem>
-                    <SelectItem value="fbo_fresh">FBO Fresh</SelectItem>
-                    <SelectItem value="fbs">FBS</SelectItem>
-                    <SelectItem value="rfbs">RFBS</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -354,7 +349,7 @@ export default function CategoryCommissionsUploadPage() {
               <div className="mb-4 flex flex-wrap gap-2">
                 {stats.map((stat, idx) => (
                   <Badge key={idx} variant="outline">
-                    {stat.marketplace.toUpperCase()} / {stat.fulfillment.toUpperCase()}: {stat.count}
+                    {stat.marketplace.toUpperCase()}: {stat.count}
                   </Badge>
                 ))}
               </div>
@@ -383,12 +378,19 @@ export default function CategoryCommissionsUploadPage() {
                       <tr className="border-b">
                         <th className="text-left py-3 px-2 font-medium">Маркетплейс</th>
                         <th className="text-left py-3 px-2 font-medium">Категория</th>
-                        <th className="text-left py-3 px-2 font-medium">Путь категории</th>
-                        <th className="text-left py-3 px-2 font-medium">Тип размещения</th>
-                        <th className="text-left py-3 px-2 font-medium">Диапазон цены</th>
-                        <th className="text-right py-3 px-2 font-medium">Комиссия (%)</th>
-                        <th className="text-right py-3 px-2 font-medium">Мин. сумма</th>
-                        <th className="text-right py-3 px-2 font-medium">Фикс. платёж</th>
+                        <th className="text-left py-3 px-2 font-medium">Тип товара</th>
+                        <th className="text-right py-3 px-2 font-medium">FBO до 100</th>
+                        <th className="text-right py-3 px-2 font-medium">FBO 100-300</th>
+                        <th className="text-right py-3 px-2 font-medium">FBO 300-500</th>
+                        <th className="text-right py-3 px-2 font-medium">FBO 500-1500</th>
+                        <th className="text-right py-3 px-2 font-medium">FBO 1500+</th>
+                        <th className="text-right py-3 px-2 font-medium">Fresh до 100</th>
+                        <th className="text-right py-3 px-2 font-medium">Fresh 100-300</th>
+                        <th className="text-right py-3 px-2 font-medium">Fresh 300+</th>
+                        <th className="text-right py-3 px-2 font-medium">FBS до 100</th>
+                        <th className="text-right py-3 px-2 font-medium">FBS 100-300</th>
+                        <th className="text-right py-3 px-2 font-medium">FBS 300+</th>
+                        <th className="text-right py-3 px-2 font-medium">RFBS</th>
                         <th className="text-center py-3 px-2 font-medium">Активна</th>
                       </tr>
                     </thead>
@@ -399,28 +401,19 @@ export default function CategoryCommissionsUploadPage() {
                             <Badge variant="outline">{comm.marketplace.toUpperCase()}</Badge>
                           </td>
                           <td className="py-3 px-2 font-medium">{comm.categoryName}</td>
-                          <td className="py-3 px-2 text-muted-foreground text-xs">
-                            {comm.categoryPath || "-"}
-                          </td>
-                          <td className="py-3 px-2">
-                            <Badge>{comm.fulfillment.toUpperCase()}</Badge>
-                          </td>
-                          <td className="py-3 px-2 text-muted-foreground text-xs">
-                            {comm.priceMin == null && comm.priceMax == null
-                              ? "-"
-                              : `${comm.priceMin ?? 0}–${comm.priceMax ?? "∞"} ₽`}
-                          </td>
-                          <td className="py-3 px-2 text-right font-medium">
-                            {comm.commissionPercent.toFixed(2)}%
-                          </td>
-                          <td className="py-3 px-2 text-right text-muted-foreground">
-                            {comm.minCommissionAmount
-                              ? `${comm.minCommissionAmount.toFixed(2)} ₽`
-                              : "-"}
-                          </td>
-                          <td className="py-3 px-2 text-right text-muted-foreground">
-                            {comm.fixedFeeAmount ? `${comm.fixedFeeAmount.toFixed(2)} ₽` : "-"}
-                          </td>
+                          <td className="py-3 px-2">{comm.productType || "-"}</td>
+                          <td className="py-3 px-2 text-right">{comm.fboUpTo100?.toFixed(2) ?? "-"}</td>
+                          <td className="py-3 px-2 text-right">{comm.fbo100To300?.toFixed(2) ?? "-"}</td>
+                          <td className="py-3 px-2 text-right">{comm.fbo300To500?.toFixed(2) ?? "-"}</td>
+                          <td className="py-3 px-2 text-right">{comm.fbo500To1500?.toFixed(2) ?? "-"}</td>
+                          <td className="py-3 px-2 text-right">{comm.fboOver1500?.toFixed(2) ?? "-"}</td>
+                          <td className="py-3 px-2 text-right">{comm.fboFreshUpTo100?.toFixed(2) ?? "-"}</td>
+                          <td className="py-3 px-2 text-right">{comm.fboFresh100To300?.toFixed(2) ?? "-"}</td>
+                          <td className="py-3 px-2 text-right">{comm.fboFreshOver300?.toFixed(2) ?? "-"}</td>
+                          <td className="py-3 px-2 text-right">{comm.fbsUpTo100?.toFixed(2) ?? "-"}</td>
+                          <td className="py-3 px-2 text-right">{comm.fbs100To300?.toFixed(2) ?? "-"}</td>
+                          <td className="py-3 px-2 text-right">{comm.fbsOver300?.toFixed(2) ?? "-"}</td>
+                          <td className="py-3 px-2 text-right">{comm.rfbs?.toFixed(2) ?? "-"}</td>
                           <td className="py-3 px-2 text-center">
                             {comm.isActive ? (
                               <Badge variant="default" className="bg-green-500">Да</Badge>

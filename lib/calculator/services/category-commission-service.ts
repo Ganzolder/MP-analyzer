@@ -22,9 +22,10 @@ function normalizeCategory(value: string | null | undefined): string | null {
 export async function findCategoryCommission(
   params: CategoryCommissionSearchParams
 ): Promise<CategoryCommissionRecord | null> {
-  const { marketplace, categoryId, categoryName, fulfillment } = params;
+  const { marketplace, categoryId, categoryName, productType } = params;
 
   const normalizedName = normalizeCategory(categoryName);
+  const normalizedProductType = normalizeCategory(productType);
 
   const whereOr: any[] = [];
 
@@ -46,6 +47,11 @@ export async function findCategoryCommission(
       }
     );
   }
+  if (normalizedProductType) {
+    whereOr.push({
+      productType: normalizedProductType,
+    });
+  }
 
   if (whereOr.length === 0) {
     return null;
@@ -54,7 +60,6 @@ export async function findCategoryCommission(
   const records = await prisma.categoryCommission.findMany({
     where: {
       marketplace,
-      fulfillment,
       isActive: true,
       OR: whereOr,
     },
@@ -79,15 +84,43 @@ export async function getCategoryCommissionPercent(params: {
   marketplace: string;
   categoryId?: string;
   categoryName?: string;
-  fulfillment: string;
+  productType?: string;
+  fulfillment: "fbo" | "fbs" | "rfbs" | "fbo_fresh" | string;
+  itemPrice?: number;
 }): Promise<number | null> {
   const record = await findCategoryCommission({
     marketplace: (params.marketplace as any) ?? "ozon",
     categoryId: params.categoryId,
     categoryName: params.categoryName,
-    fulfillment: params.fulfillment,
+    productType: params.productType,
   });
 
-  return record ? record.commissionPercent : null;
+  if (!record) return null;
+
+  const price = params.itemPrice ?? 0;
+  const fulfillment = params.fulfillment.toLowerCase();
+
+  if (fulfillment === "rfbs") {
+    return record.rfbs ?? null;
+  }
+  if (fulfillment === "fbo_fresh") {
+    if (price <= 100) return record.fboFreshUpTo100 ?? null;
+    if (price <= 300) return record.fboFresh100To300 ?? null;
+    return record.fboFreshOver300 ?? null;
+  }
+  if (fulfillment === "fbo") {
+    if (price <= 100) return record.fboUpTo100 ?? null;
+    if (price <= 300) return record.fbo100To300 ?? null;
+    if (price <= 500) return record.fbo300To500 ?? null;
+    if (price <= 1500) return record.fbo500To1500 ?? null;
+    return record.fboOver1500 ?? null;
+  }
+  if (fulfillment === "fbs") {
+    if (price <= 100) return record.fbsUpTo100 ?? null;
+    if (price <= 300) return record.fbs100To300 ?? null;
+    return record.fbsOver300 ?? null;
+  }
+
+  return null;
 }
 
