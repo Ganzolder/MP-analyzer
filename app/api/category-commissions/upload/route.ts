@@ -271,6 +271,9 @@ export async function POST(request: NextRequest) {
 
     const records: any[] = [];
     const errors: string[] = [];
+    let lastCategoryGroup: string | null = null;
+    let rowsTotal = 0;
+    let rowsProcessed = 0;
 
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
@@ -286,10 +289,18 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      const categoryGroup = parseString(row[idxCategoryName]);
+      rowsTotal += 1;
+
+      const rawCategoryGroup = parseString(row[idxCategoryName]);
+      const categoryGroup = rawCategoryGroup || lastCategoryGroup;
       if (!categoryGroup) {
-        errors.push(`Строка ${rowNum}: пустое название категории`);
+        // В Excel часто "Категория" объединена (merged) и заполнена только в первой строке блока.
+        // Если не нашли ни текущую, ни предыдущую — строка действительно невалидна.
+        errors.push(`Строка ${rowNum}: пустая категория (и нет предыдущей для наследования)`);
         continue;
+      }
+      if (rawCategoryGroup) {
+        lastCategoryGroup = rawCategoryGroup;
       }
 
       const fileCategoryPath = idxCategoryPath !== -1
@@ -301,6 +312,8 @@ export async function POST(request: NextRequest) {
       const productType = idxProductType !== -1
         ? parseString(row[idxProductType])
         : null;
+
+      rowsProcessed += 1;
 
       // Нормализуем на "самый конкретный" путь:
       // categoryPath = "Категория / Тип товара" (если есть)
@@ -439,13 +452,15 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: `Загружено ${inserted} ставок комиссии (из ${normalizedRecords.length})`,
+      message: `Обработано строк: ${rowsProcessed}/${rowsTotal}. Загружено ставок комиссии: ${inserted} (из ${normalizedRecords.length})`,
       stats: {
         total: normalizedRecords.length,
         inserted,
         failed,
         parseErrors: errors.length,
         parseErrorsSample: errors.slice(0, 50),
+        rowsTotal,
+        rowsProcessed,
       },
     });
   } catch (error: any) {
