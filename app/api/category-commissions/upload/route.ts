@@ -12,7 +12,11 @@ async function ensureCategoryCommissionTable() {
       "categoryId" TEXT,
       "categoryName" TEXT NOT NULL,
       "categoryPath" TEXT,
+      "productType" TEXT,
       "fulfillment" TEXT NOT NULL,
+      "priceMin" DOUBLE PRECISION,
+      "priceMax" DOUBLE PRECISION,
+      "tierLabel" TEXT,
       "commissionPercent" DOUBLE PRECISION NOT NULL,
       "minCommissionAmount" DOUBLE PRECISION,
       "fixedFeeAmount" DOUBLE PRECISION,
@@ -25,6 +29,12 @@ async function ensureCategoryCommissionTable() {
     )
   `;
 
+  // Мягкое обновление схемы (если таблица была создана старой версией)
+  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "productType" TEXT`;
+  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "priceMin" DOUBLE PRECISION`;
+  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "priceMax" DOUBLE PRECISION`;
+  await prisma.$executeRaw`ALTER TABLE "CategoryCommission" ADD COLUMN IF NOT EXISTS "tierLabel" TEXT`;
+
   await prisma.$executeRaw`
     CREATE INDEX IF NOT EXISTS "CategoryCommission_marketplace_categoryName_fulfillment_idx"
     ON "CategoryCommission"("marketplace", "categoryName", "fulfillment")
@@ -33,6 +43,16 @@ async function ensureCategoryCommissionTable() {
   await prisma.$executeRaw`
     CREATE INDEX IF NOT EXISTS "CategoryCommission_marketplace_categoryId_fulfillment_idx"
     ON "CategoryCommission"("marketplace", "categoryId", "fulfillment")
+  `;
+
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "CategoryCommission_marketplace_categoryPath_fulfillment_idx"
+    ON "CategoryCommission"("marketplace", "categoryPath", "fulfillment")
+  `;
+
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "CategoryCommission_marketplace_fulfillment_priceMin_priceMax_idx"
+    ON "CategoryCommission"("marketplace", "fulfillment", "priceMin", "priceMax")
   `;
 }
 
@@ -120,6 +140,12 @@ export async function POST(request: NextRequest) {
       "код категории",
       "category id",
     ]);
+    const idxProductType = findColumnIndex([
+      "тип товара",
+      "подкатегория",
+      "вид товара",
+      "тип",
+    ]);
 
     if (idxCategoryName === -1) {
       return NextResponse.json(
@@ -131,34 +157,95 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Колонки ставок для разных типов размещения.
-    // Здесь мы предполагаем, что в вашем файле есть отдельные колонки для FBO/FBS и т.п.
-    // Ищем их по фрагментам названий.
-    type FulfillmentColumn = {
-      type: string;
+    // Колонки ставок: в файлах Ozon часто есть много колонок FBO/FBS с диапазонами цен.
+    // Собираем ВСЕ подходящие колонки, а не только одну.
+    type CommissionColumn = {
+      fulfillment: string; // fbo, fbo_fresh, fbs, rfbs
       index: number;
+      priceMin: number | null;
+      priceMax: number | null;
+      tierLabel: string;
     };
 
-    const fulfillmentColumns: FulfillmentColumn[] = [];
+    const normalizeHeader = (h: string) =>
+      h
+        .replace(/\r?\n/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .toLowerCase();
 
-    const pushIfFound = (type: string, names: string[]) => {
-      const idx = findColumnIndex(names);
-      if (idx !== -1) {
-        fulfillmentColumns.push({ type, index: idx });
+    const parseRubRange = (
+      header: string
+    ): { priceMin: number | null; priceMax: number | null } => {
+      const h = normalizeHeader(header);
+
+      const toNum = (s: string) => parseFloat(s.replace(",", "."));
+
+      // "до 100 руб."
+      let m = h.match(/до\s*(\d+(?:[.,]\d+)?)\s*руб/);
+      if (m) {
+        return { priceMin: 0, priceMax: toNum(m[1]) };
       }
+
+      // "свыше 100 до 300 руб."
+      m = h.match(/свыше\s*(\d+(?:[.,]\d+)?)\s*(?:руб\.?)?\s*до\s*(\d+(?:[.,]\d+)?)\s*руб/);
+      if (m) {
+        return { priceMin: toNum(m[1]), priceMax: toNum(m[2]) };
+      }
+
+      // "свыше 1500 руб."
+      m = h.match(/свыше\s*(\d+(?:[.,]\d+)?)\s*руб/);
+      if (m) {
+        return { priceMin: toNum(m[1]), priceMax: null };
+      }
+
+      return { priceMin: null, priceMax: null };
     };
 
-    // Примеры заголовков из типовых файлов Ozon:
-    // "FBO", "FBO (центральный склад)", "FBS", "RFBS", "Комиссия FBO", "Комиссия FBS" и т.п.
-    pushIfFound("fbo", ["fbo", "фbo", "комиссия fbo", "центральный склад"]);
-    pushIfFound("fbs", ["fbs", "фbs", "комиссия fbs"]);
-    pushIfFound("rfbs", ["rfbs", "r fbs", "комиссия rfbs"]);
+    const commissionColumns: CommissionColumn[] = [];
 
-    if (fulfillmentColumns.length === 0) {
+    for (let i = 0; i < headers.length; i++) {
+      const raw = String(data[0][i] ?? "");
+      const h = normalizeHeader(raw);
+      if (!h) continue;
+
+      // пропускаем не-колонки комиссий
+      if (
+        h.includes("категор") ||
+        h.includes("наименование") ||
+        h.includes("путь") ||
+        h.includes("иерарх") ||
+        h.includes("код") ||
+        h.includes("id ") ||
+        h === "id" ||
+        h.includes("тип товара")
+      ) {
+        continue;
+      }
+
+      let fulfillment: string | null = null;
+      if (h.includes("rfbs")) fulfillment = "rfbs";
+      else if (h.includes("fbo fresh")) fulfillment = "fbo_fresh";
+      else if (h.startsWith("fbo") || h.includes(" fbo")) fulfillment = "fbo";
+      else if (h.startsWith("fbs") || h.includes(" fbs")) fulfillment = "fbs";
+
+      if (!fulfillment) continue;
+
+      const { priceMin, priceMax } = parseRubRange(raw);
+      commissionColumns.push({
+        fulfillment,
+        index: i,
+        priceMin,
+        priceMax,
+        tierLabel: normalizeHeader(raw),
+      });
+    }
+
+    if (commissionColumns.length === 0) {
       return NextResponse.json(
         {
           error:
-            "Не найдены колонки со ставками комиссии для типов размещения (FBO/FBS/RFBS). Проверьте заголовки файла.",
+            "Не найдены колонки со ставками комиссии (FBO/FBS/RFBS). Проверьте заголовки файла.",
         },
         { status: 400 }
       );
@@ -199,21 +286,31 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      const categoryName = parseString(row[idxCategoryName]);
-      if (!categoryName) {
+      const categoryGroup = parseString(row[idxCategoryName]);
+      if (!categoryGroup) {
         errors.push(`Строка ${rowNum}: пустое название категории`);
         continue;
       }
 
-      const categoryPath = idxCategoryPath !== -1
+      const fileCategoryPath = idxCategoryPath !== -1
         ? parseString(row[idxCategoryPath])
         : null;
       const categoryId = idxCategoryId !== -1
         ? parseString(row[idxCategoryId])
         : null;
+      const productType = idxProductType !== -1
+        ? parseString(row[idxProductType])
+        : null;
+
+      // Нормализуем на "самый конкретный" путь:
+      // categoryPath = "Категория / Тип товара" (если есть)
+      const fullPath = productType
+        ? `${categoryGroup} / ${productType}`
+        : (fileCategoryPath || categoryGroup);
+      const categoryName = productType || categoryGroup;
 
       // Для каждой колонки со ставкой создаём отдельную запись CategoryCommission
-      for (const col of fulfillmentColumns) {
+      for (const col of commissionColumns) {
         const rawValue = row[col.index];
         let percent = parseNumber(rawValue);
 
@@ -237,8 +334,12 @@ export async function POST(request: NextRequest) {
           marketplace: "ozon",
           categoryId,
           categoryName,
-          categoryPath,
-          fulfillment: col.type,
+          categoryPath: fullPath,
+          productType,
+          fulfillment: col.fulfillment,
+          priceMin: col.priceMin,
+          priceMax: col.priceMax,
+          tierLabel: col.tierLabel,
           commissionPercent: percent,
           minCommissionAmount: null,
           fixedFeeAmount: null,
@@ -253,7 +354,10 @@ export async function POST(request: NextRequest) {
         record.marketplace,
         (record.categoryId || "").toLowerCase(),
         record.categoryName.toLowerCase(),
+        (record.categoryPath || "").toLowerCase(),
         record.fulfillment.toLowerCase(),
+        String(record.priceMin ?? ""),
+        String(record.priceMax ?? ""),
       ].join("|");
       dedupMap.set(key, record);
     }

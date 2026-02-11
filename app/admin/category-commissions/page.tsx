@@ -31,7 +31,11 @@ interface CategoryCommission {
   categoryId: string | null;
   categoryName: string;
   categoryPath: string | null;
+  productType?: string | null;
   fulfillment: string;
+  priceMin?: number | null;
+  priceMax?: number | null;
+  tierLabel?: string | null;
   commissionPercent: number;
   minCommissionAmount: number | null;
   fixedFeeAmount: number | null;
@@ -329,6 +333,7 @@ export default function CategoryCommissionsUploadPage() {
                   <SelectContent>
                     <SelectItem value="all">Все типы</SelectItem>
                     <SelectItem value="fbo">FBO</SelectItem>
+                    <SelectItem value="fbo_fresh">FBO Fresh</SelectItem>
                     <SelectItem value="fbs">FBS</SelectItem>
                     <SelectItem value="rfbs">RFBS</SelectItem>
                   </SelectContent>
@@ -380,6 +385,7 @@ export default function CategoryCommissionsUploadPage() {
                         <th className="text-left py-3 px-2 font-medium">Категория</th>
                         <th className="text-left py-3 px-2 font-medium">Путь категории</th>
                         <th className="text-left py-3 px-2 font-medium">Тип размещения</th>
+                        <th className="text-left py-3 px-2 font-medium">Диапазон цены</th>
                         <th className="text-right py-3 px-2 font-medium">Комиссия (%)</th>
                         <th className="text-right py-3 px-2 font-medium">Мин. сумма</th>
                         <th className="text-right py-3 px-2 font-medium">Фикс. платёж</th>
@@ -398,6 +404,11 @@ export default function CategoryCommissionsUploadPage() {
                           </td>
                           <td className="py-3 px-2">
                             <Badge>{comm.fulfillment.toUpperCase()}</Badge>
+                          </td>
+                          <td className="py-3 px-2 text-muted-foreground text-xs">
+                            {comm.priceMin == null && comm.priceMax == null
+                              ? "-"
+                              : `${comm.priceMin ?? 0}–${comm.priceMax ?? "∞"} ₽`}
                           </td>
                           <td className="py-3 px-2 text-right font-medium">
                             {comm.commissionPercent.toFixed(2)}%

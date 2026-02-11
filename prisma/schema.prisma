@@ -247,9 +247,15 @@ model CategoryCommission {
   categoryId   String?  // Внутренний код категории, если есть
   categoryName String   // Отображаемое имя категории
   categoryPath String?  // Полный путь категории (например, "Электроника / Смартфоны")
+  productType  String?  // Тип товара / подкатегория (из файла Ozon)
 
   // Тип размещения / работы
   fulfillment  String   // fbo, fbs, rfbs, express и т.п.
+
+  // Диапазон цены (если ставки зависят от цены товара)
+  priceMin     Float?
+  priceMax     Float?
+  tierLabel    String?  // Исходный заголовок колонки (например, "FBO до 100 руб.")
 
   // Ставки вознаграждения
   commissionPercent   Float    // Ставка комиссии в %, например 15.5
@@ -266,4 +272,6 @@ model CategoryCommission {
   // Индексы для быстрого поиска
   @@index([marketplace, categoryName, fulfillment])
   @@index([marketplace, categoryId, fulfillment])
+  @@index([marketplace, categoryPath, fulfillment])
+  @@index([marketplace, fulfillment, priceMin, priceMax])
 }

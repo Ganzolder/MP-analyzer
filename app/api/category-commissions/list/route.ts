@@ -40,8 +40,11 @@ export async function GET(request: NextRequest) {
         take: limit,
         orderBy: [
           { marketplace: "asc" },
-          { categoryName: "asc" },
           { fulfillment: "asc" },
+          { categoryPath: "asc" },
+          { categoryName: "asc" },
+          { priceMin: "asc" },
+          { priceMax: "asc" },
         ],
       }),
       prisma.categoryCommission.count({ where }),
