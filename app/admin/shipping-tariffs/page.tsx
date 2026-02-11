@@ -67,6 +67,7 @@ export default function ShippingTariffsUploadPage() {
   const [file, setFile] = useState<File | null>(null);
   const [uploadDeliveryMethod, setUploadDeliveryMethod] = useState<"fbo" | "fbs">("fbo");
   const [isUploading, setIsUploading] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [result, setResult] = useState<UploadResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -141,6 +142,42 @@ export default function ShippingTariffsUploadPage() {
     } finally {
       setIsUploading(false);
       setTimeout(() => setUploadProgress(0), 1500);
+    }
+  };
+
+  const handleClearTariffs = async () => {
+    const confirmed = window.confirm(
+      "Очистить всю базу тарифов логистики? Это действие нельзя отменить."
+    );
+    if (!confirmed) return;
+
+    setIsClearing(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/shipping-tariffs/clear", {
+        method: "POST",
+      });
+
+      const data = (await response.json()) as {
+        success?: boolean;
+        message?: string;
+        error?: string;
+      };
+
+      if (!response.ok || !data.success) {
+        setError(data.error || "Не удалось очистить базу тарифов.");
+      } else {
+        setResult({
+          success: true,
+          message: data.message || "База тарифов очищена.",
+        });
+        await loadTariffs(1);
+      }
+    } catch (err: any) {
+      setError(err.message || "Ошибка при очистке базы тарифов.");
+    } finally {
+      setIsClearing(false);
     }
   };
 
@@ -241,6 +278,14 @@ export default function ShippingTariffsUploadPage() {
               <div className="flex gap-3">
                 <Button type="submit" disabled={!file || isUploading}>
                   {isUploading ? "Загрузка..." : "Загрузить в базу"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={isUploading || isClearing}
+                  onClick={handleClearTariffs}
+                >
+                  {isClearing ? "Очистка..." : "Очистить базу тарифов"}
                 </Button>
               </div>
 
