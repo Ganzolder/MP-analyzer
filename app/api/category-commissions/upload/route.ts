@@ -327,7 +327,9 @@ export async function POST(request: NextRequest) {
         // умножаем на 100 для преобразования в проценты
         if (percent < 1 && percent > 0) {
           percent = percent * 100;
-          console.log(`[API] Преобразовано ${rawValue} → ${percent}% (строка ${rowNum}, ${col.type})`);
+          console.log(
+            `[API] Преобразовано ${rawValue} → ${percent}% (строка ${rowNum}, ${col.fulfillment})`
+          );
         }
 
         records.push({
