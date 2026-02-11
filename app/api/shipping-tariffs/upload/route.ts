@@ -182,10 +182,21 @@ export async function POST(request: NextRequest) {
       return -1;
     };
 
-    // Находим индексы колонок (гибкий поиск по возможным названиям)
-    // Сначала ищем объём, чтобы исключить его из поиска стоимости
-    const volumeRangeIndex = findColumnIndex(["объём товара", "объем товара", "объём", "объем", "volume", "объём упаковки", "объем упаковки"]);
+    // Находим индексы колонок
+    // В файле всего 2 колонки: "Объём товара" и "Тариф с НДС"
+    // Ищем их точно по названиям
+    const volumeRangeIndex = findColumnIndex(["объём товара", "объем товара"]);
+    const basePriceIndex = findColumnIndex(["тариф с ндс", "тариф сндс"]);
     
+    // Если не нашли точные совпадения, пробуем более широкий поиск
+    const volumeRangeIndexFallback = volumeRangeIndex === -1 
+      ? findColumnIndex(["объём", "объем", "volume", "объём упаковки", "объем упаковки"])
+      : volumeRangeIndex;
+    
+    const basePriceIndexFallback = basePriceIndex === -1
+      ? findColumnIndex(["тариф", "стоимость", "цена", "price", "базовая стоимость", "baseprice"])
+      : basePriceIndex;
+
     // Функция для поиска колонки с исключением определённого индекса
     const findColumnIndexExcluding = (possibleNames: string[], excludeIndex: number): number => {
       for (let i = 0; i < headersLower.length; i++) {
@@ -220,11 +231,11 @@ export async function POST(request: NextRequest) {
       widthMax: findColumnIndex(["ширина макс", "ширина до", "widthmax"]),
       heightMin: findColumnIndex(["высота мин", "высота от", "heightmin"]),
       heightMax: findColumnIndex(["высота макс", "высота до", "heightmax"]),
-      volumeRange: volumeRangeIndex,
+      volumeRange: volumeRangeIndexFallback,
       // Ищем стоимость, исключая колонку объёма
-      basePrice: volumeRangeIndex !== -1 
-        ? findColumnIndexExcluding(["тариф с ндс", "тариф сндс", "базовая стоимость", "baseprice", "стоимость", "цена", "price", "тариф"], volumeRangeIndex)
-        : findColumnIndex(["тариф с ндс", "тариф сндс", "базовая стоимость", "baseprice", "стоимость", "цена", "price", "тариф"]),
+      basePrice: volumeRangeIndexFallback !== -1 
+        ? findColumnIndexExcluding(["тариф с ндс", "тариф сндс", "базовая стоимость", "baseprice", "стоимость", "цена", "price", "тариф"], volumeRangeIndexFallback)
+        : basePriceIndexFallback,
       pricePerKg: findColumnIndex(["цена за кг", "priceperkg", "за кг", "руб/кг"]),
       pricePerVolume: findColumnIndex(["цена за объём", "pricepervolume", "за объём", "руб/см³", "цена за объем"]),
       volumeMin: findColumnIndex(["объём мин", "объем мин", "объём от", "объем от", "volumemin", "volume min"]),
@@ -395,9 +406,10 @@ export async function POST(request: NextRequest) {
         }
         
         // Парсим базовую стоимость (тариф)
+        // Поддерживаем форматы: "81,34 ₽", "4 417,00 ₽", "9432,87"
         let basePrice = parseNumber(row[indices.basePrice]);
         
-        // Если не нашли через parseNumber, пробуем убрать "Р" и другие символы
+        // Если не нашли через parseNumber, пробуем убрать "Р", "₽" и другие символы
         if (basePrice === null && indices.basePrice !== -1) {
           const rawValue = row[indices.basePrice];
           if (rawValue !== null && rawValue !== undefined) {
@@ -407,7 +419,11 @@ export async function POST(request: NextRequest) {
               errors.push(`Строка ${rowNum}: значение в колонке стоимости похоже на объём: "${strValue}"`);
               continue;
             }
-            const cleaned = strValue.replace(/[Рр₽]/g, "").replace(/,/g, ".").replace(/\s/g, "");
+            // Убираем валютные символы, пробелы (разделители тысяч), заменяем запятую на точку
+            const cleaned = strValue
+              .replace(/[Рр₽]/g, "") // Убираем символы валюты
+              .replace(/\s/g, "") // Убираем все пробелы (разделители тысяч)
+              .replace(/,/g, "."); // Заменяем запятую на точку для десятичных
             basePrice = parseFloat(cleaned);
             if (isNaN(basePrice)) basePrice = null;
           }
