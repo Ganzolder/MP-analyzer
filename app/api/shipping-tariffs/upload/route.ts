@@ -55,17 +55,37 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Первая строка - заголовки
-    const headers = data[0].map((h: any) => String(h || "").toLowerCase().trim());
+    // Ищем строку с заголовками (может быть не первая)
+    let headerRowIndex = 0;
+    for (let i = 0; i < Math.min(5, data.length); i++) {
+      const row = data[i];
+      if (row && row.some((cell: any) => {
+        const str = String(cell || "").toLowerCase();
+        return str.includes("тариф") || str.includes("объём") || str.includes("объем");
+      })) {
+        headerRowIndex = i;
+        break;
+      }
+    }
 
+    const headers = data[headerRowIndex].map((h: any) => String(h || "").trim());
+    const headersLower = headers.map((h: string) => h.toLowerCase());
+
+    console.log("📋 [API] Строка заголовков:", headerRowIndex + 1);
     console.log("📋 [API] Заголовки файла:", headers);
 
-    // Функция для поиска индекса колонки
+    // Функция для поиска индекса колонки (точное совпадение или includes)
     const findColumnIndex = (possibleNames: string[]): number => {
-      for (let i = 0; i < headers.length; i++) {
-        const header = headers[i];
+      for (let i = 0; i < headersLower.length; i++) {
+        const header = headersLower[i];
         for (const possible of possibleNames) {
-          if (header.includes(possible) || possible.includes(header)) {
+          const possibleLower = possible.toLowerCase();
+          // Сначала проверяем точное совпадение (без учета регистра)
+          if (header === possibleLower) {
+            return i;
+          }
+          // Потом проверяем includes
+          if (header.includes(possibleLower) || possibleLower.includes(header)) {
             return i;
           }
         }
@@ -90,8 +110,8 @@ export async function POST(request: NextRequest) {
       widthMax: findColumnIndex(["ширина макс", "ширина до", "widthmax"]),
       heightMin: findColumnIndex(["высота мин", "высота от", "heightmin"]),
       heightMax: findColumnIndex(["высота макс", "высота до", "heightmax"]),
-      basePrice: findColumnIndex(["базовая стоимость", "baseprice", "стоимость", "цена", "price", "тариф", "тариф с ндс", "тариф сндс", "ндс"]),
       volumeRange: findColumnIndex(["объём товара", "объем товара", "объём", "объем", "volume", "объём упаковки", "объем упаковки"]),
+      basePrice: findColumnIndex(["тариф с ндс", "тариф сндс", "базовая стоимость", "baseprice", "стоимость", "цена", "price", "тариф"]),
       pricePerKg: findColumnIndex(["цена за кг", "priceperkg", "за кг", "руб/кг"]),
       pricePerVolume: findColumnIndex(["цена за объём", "pricepervolume", "за объём", "руб/см³", "цена за объем"]),
       volumeMin: findColumnIndex(["объём мин", "объем мин", "объём от", "объем от", "volumemin", "volume min"]),
@@ -100,20 +120,41 @@ export async function POST(request: NextRequest) {
       priority: findColumnIndex(["приоритет", "priority"]),
     };
 
+    // Логируем найденные индексы для отладки
+    console.log("📋 [API] Найденные индексы колонок:", {
+      volumeRange: indices.volumeRange !== -1 ? `${indices.volumeRange}: "${headers[indices.volumeRange]}"` : "не найдена",
+      basePrice: indices.basePrice !== -1 ? `${indices.basePrice}: "${headers[indices.basePrice]}"` : "не найдена",
+    });
+
     // Проверяем обязательные колонки
     if (indices.basePrice === -1) {
       return NextResponse.json(
-        { error: "Не найдена колонка с базовой стоимостью. Проверьте заголовки файла." },
+        { 
+          error: "Не найдена колонка с базовой стоимостью. Проверьте заголовки файла.",
+          headers: headers,
+          foundIndices: indices
+        },
+        { status: 400 }
+      );
+    }
+    
+    // Проверяем, что не перепутали колонки (объём не должен быть стоимостью)
+    if (indices.volumeRange === indices.basePrice && indices.volumeRange !== -1) {
+      return NextResponse.json(
+        { 
+          error: "Колонки объёма и стоимости совпадают. Проверьте структуру файла.",
+          headers: headers,
+        },
         { status: 400 }
       );
     }
 
-    // Парсим данные
+    // Парсим данные (начинаем со строки после заголовков)
     const tariffs = [];
     const errors: string[] = [];
     const BATCH_SIZE = 1000; // Вставляем по 1000 записей за раз
 
-    for (let i = 1; i < data.length; i++) {
+    for (let i = headerRowIndex + 1; i < data.length; i++) {
       const row = data[i];
       const rowNum = i + 1;
 
@@ -176,6 +217,12 @@ export async function POST(request: NextRequest) {
       };
 
       try {
+        // Проверяем, что не пытаемся парсить объём как стоимость
+        if (indices.volumeRange !== -1 && indices.basePrice === indices.volumeRange) {
+          errors.push(`Строка ${rowNum}: колонки объёма и стоимости совпадают`);
+          continue;
+        }
+        
         // Парсим базовую стоимость (тариф)
         let basePrice = parseNumber(row[indices.basePrice]);
         
@@ -183,14 +230,21 @@ export async function POST(request: NextRequest) {
         if (basePrice === null && indices.basePrice !== -1) {
           const rawValue = row[indices.basePrice];
           if (rawValue !== null && rawValue !== undefined) {
-            const cleaned = String(rawValue).replace(/[Рр₽]/g, "").replace(/,/g, ".").replace(/\s/g, "");
+            const strValue = String(rawValue).trim();
+            // Пропускаем, если это явно диапазон объёма (содержит "л", "от", "-")
+            if (strValue.toLowerCase().includes("л") || strValue.toLowerCase().includes("от") || strValue.includes("-")) {
+              errors.push(`Строка ${rowNum}: значение в колонке стоимости похоже на объём: "${strValue}"`);
+              continue;
+            }
+            const cleaned = strValue.replace(/[Рр₽]/g, "").replace(/,/g, ".").replace(/\s/g, "");
             basePrice = parseFloat(cleaned);
             if (isNaN(basePrice)) basePrice = null;
           }
         }
         
         if (basePrice === null || basePrice < 0) {
-          errors.push(`Строка ${rowNum}: неверная базовая стоимость (значение: ${row[indices.basePrice]})`);
+          const rawValue = row[indices.basePrice];
+          errors.push(`Строка ${rowNum}: неверная базовая стоимость (значение: "${rawValue}", тип: ${typeof rawValue})`);
           continue;
         }
 
