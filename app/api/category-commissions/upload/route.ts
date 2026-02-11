@@ -333,17 +333,8 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const dedupMap = new Map<string, (typeof records)[number]>();
-    for (const record of records) {
-      const key = [
-        record.marketplace,
-        record.categoryName.toLowerCase(),
-        (record.productType || "").toLowerCase(),
-        (record.categoryPath || "").toLowerCase(),
-      ].join("|");
-      dedupMap.set(key, record);
-    }
-    const normalizedRecords = Array.from(dedupMap.values());
+    // По требованию: загружаем каждую строку Excel как отдельную запись (без дедупликации).
+    const normalizedRecords = records;
 
     console.log(
       `📊 [API] Подготовлено записей комиссий: ${records.length} (после дедупликации: ${normalizedRecords.length}), ошибок: ${errors.length}`
