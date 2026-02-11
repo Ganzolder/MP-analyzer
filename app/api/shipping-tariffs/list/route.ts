@@ -18,11 +18,12 @@ export async function GET(request: NextRequest) {
 
     // Формируем условия фильтрации
     const where: any = {};
-    if (marketplace) {
-      where.marketplace = marketplace;
+    if (marketplace && marketplace !== "all") {
+      where.marketplace = marketplace.toLowerCase();
     }
-    if (deliveryMethod) {
-      where.deliveryMethod = deliveryMethod;
+    if (deliveryMethod && deliveryMethod !== "all") {
+      // Приводим к lowercase, так как в БД сохраняем в lowercase
+      where.deliveryMethod = deliveryMethod.toLowerCase();
     }
     if (search) {
       where.OR = [
@@ -47,10 +48,11 @@ export async function GET(request: NextRequest) {
       prisma.shippingTariff.count({ where }),
     ]);
 
-    // Получаем статистику
+    // Получаем статистику - группируем только по marketplace и deliveryMethod
     const stats = await prisma.shippingTariff.groupBy({
       by: ["marketplace", "deliveryMethod"],
       _count: true,
+      where: where, // Применяем те же фильтры
     });
 
     return NextResponse.json({
@@ -62,11 +64,13 @@ export async function GET(request: NextRequest) {
         total,
         totalPages: Math.ceil(total / limit),
       },
-      stats: stats.map((s) => ({
-        marketplace: s.marketplace,
-        deliveryMethod: s.deliveryMethod || "all",
-        count: s._count,
-      })),
+      stats: stats
+        .filter((s) => s.marketplace && s.deliveryMethod) // Фильтруем только валидные записи
+        .map((s) => ({
+          marketplace: s.marketplace || "unknown",
+          deliveryMethod: s.deliveryMethod || null,
+          count: s._count,
+        })),
     });
   } catch (error: any) {
     console.error("❌ [API] Ошибка при получении списка тарифов:", error);
