@@ -8,6 +8,7 @@ async function ensureShippingTariffTable() {
     CREATE TABLE IF NOT EXISTS "ShippingTariff" (
       "id" TEXT NOT NULL,
       "marketplace" TEXT NOT NULL DEFAULT 'ozon',
+      "priceBand" TEXT,
       "fromRegion" TEXT,
       "toRegion" TEXT,
       "fromCity" TEXT,
@@ -41,6 +42,9 @@ async function ensureShippingTariffTable() {
     )
   `;
 
+  // Soft migrations (если таблица уже существовала)
+  await prisma.$executeRaw`ALTER TABLE "ShippingTariff" ADD COLUMN IF NOT EXISTS "priceBand" TEXT`;
+
   await prisma.$executeRaw`
     CREATE INDEX IF NOT EXISTS "ShippingTariff_marketplace_fromRegion_toRegion_idx"
     ON "ShippingTariff"("marketplace", "fromRegion", "toRegion")
@@ -65,6 +69,11 @@ async function ensureShippingTariffTable() {
     CREATE INDEX IF NOT EXISTS "ShippingTariff_priority_idx"
     ON "ShippingTariff"("priority")
   `;
+
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "ShippingTariff_marketplace_deliveryMethod_priceBand_idx"
+    ON "ShippingTariff"("marketplace", "deliveryMethod", "priceBand")
+  `;
 }
 
 /**
@@ -78,6 +87,7 @@ export async function POST(request: NextRequest) {
     const deliveryMethodInput = String(formData.get("deliveryMethod") || "")
       .trim()
       .toLowerCase();
+    const priceBandInput = String(formData.get("priceBand") || "").trim().toLowerCase();
 
     if (!file) {
       return NextResponse.json(
@@ -114,6 +124,33 @@ export async function POST(request: NextRequest) {
         {
           error:
             "Не удалось определить метод доставки. Выберите FBO или FBS в форме загрузки.",
+        },
+        { status: 400 }
+      );
+    }
+
+    // Определяем сегмент тарифа (до 300 / от 301): сначала из формы, затем по имени файла
+    let detectedPriceBand: string | null =
+      priceBandInput === "up_to_300" || priceBandInput === "over_300" ? priceBandInput : null;
+
+    if (!detectedPriceBand) {
+      if (fileNameLower.includes("до 300") || fileNameLower.includes("до300") || fileNameLower.includes("up to 300")) {
+        detectedPriceBand = "up_to_300";
+      } else if (
+        fileNameLower.includes("от 300") ||
+        fileNameLower.includes("от300") ||
+        fileNameLower.includes("301") ||
+        fileNameLower.includes("over 300")
+      ) {
+        detectedPriceBand = "over_300";
+      }
+    }
+
+    if (!detectedPriceBand) {
+      return NextResponse.json(
+        {
+          error:
+            "Не удалось определить сегмент тарифа. Выберите: До 300 ₽ или От 301 ₽ в форме загрузки.",
         },
         { status: 400 }
       );
@@ -595,6 +632,7 @@ export async function POST(request: NextRequest) {
 
         const tariff: any = {
           marketplace: parseString(row[indices.marketplace]) || "ozon",
+          priceBand: detectedPriceBand,
           fromRegion: parseString(row[indices.fromRegion]) || null,
           toRegion: parseString(row[indices.toRegion]) || null,
           fromCity: parseString(row[indices.fromCity]) || null,
@@ -647,11 +685,12 @@ export async function POST(request: NextRequest) {
     // Гарантируем существование таблицы и индексов перед загрузкой
     await ensureShippingTariffTable();
 
-    // Перезаливаем тарифы для выбранного метода, чтобы не копились старые/ошибочные записи
+    // Перезаливаем тарифы для выбранного метода И сегмента, чтобы не перетирать другие сегменты
     await prisma.shippingTariff.deleteMany({
       where: {
         marketplace: "ozon",
         deliveryMethod: detectedDeliveryMethod,
+        priceBand: detectedPriceBand,
       },
     });
 

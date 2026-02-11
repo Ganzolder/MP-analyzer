@@ -12,6 +12,7 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "50");
     const marketplace = searchParams.get("marketplace") || undefined;
     const deliveryMethod = searchParams.get("deliveryMethod") || undefined;
+    const priceBand = searchParams.get("priceBand") || undefined;
     const search = searchParams.get("search") || undefined;
 
     const skip = (page - 1) * limit;
@@ -24,6 +25,9 @@ export async function GET(request: NextRequest) {
     if (deliveryMethod && deliveryMethod !== "all") {
       // Приводим к lowercase, так как в БД сохраняем в lowercase
       where.deliveryMethod = deliveryMethod.toLowerCase();
+    }
+    if (priceBand && priceBand !== "all") {
+      where.priceBand = priceBand.toLowerCase();
     }
     if (search) {
       where.OR = [
@@ -48,9 +52,9 @@ export async function GET(request: NextRequest) {
       prisma.shippingTariff.count({ where }),
     ]);
 
-    // Получаем статистику - группируем только по marketplace и deliveryMethod
+    // Получаем статистику - группируем по marketplace, deliveryMethod и сегменту
     const stats = await prisma.shippingTariff.groupBy({
-      by: ["marketplace", "deliveryMethod"],
+      by: ["marketplace", "deliveryMethod", "priceBand"],
       _count: true,
       where: where, // Применяем те же фильтры
     });
@@ -65,10 +69,11 @@ export async function GET(request: NextRequest) {
         totalPages: Math.ceil(total / limit),
       },
       stats: stats
-        .filter((s) => s.marketplace && s.deliveryMethod) // Фильтруем только валидные записи
+        .filter((s) => s.marketplace && s.deliveryMethod) // deliveryMethod обязателен для наших тарифов
         .map((s) => ({
           marketplace: s.marketplace || "unknown",
           deliveryMethod: s.deliveryMethod || null,
+          priceBand: (s as any).priceBand || null,
           count: s._count,
         })),
     });

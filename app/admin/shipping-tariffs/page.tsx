@@ -34,6 +34,7 @@ interface UploadResponse {
 interface ShippingTariff {
   id: string;
   marketplace: string;
+  priceBand: string | null;
   fromRegion: string | null;
   toRegion: string | null;
   fromCity: string | null;
@@ -65,6 +66,7 @@ interface TariffsListResponse {
   stats: Array<{
     marketplace: string;
     deliveryMethod: string | null;
+    priceBand?: string | null;
     count: number;
   }>;
 }
@@ -72,6 +74,7 @@ interface TariffsListResponse {
 export default function ShippingTariffsUploadPage() {
   const [file, setFile] = useState<File | null>(null);
   const [uploadDeliveryMethod, setUploadDeliveryMethod] = useState<"fbo" | "fbs">("fbo");
+  const [uploadPriceBand, setUploadPriceBand] = useState<"up_to_300" | "over_300">("up_to_300");
   const [isUploading, setIsUploading] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -84,8 +87,10 @@ export default function ShippingTariffsUploadPage() {
   const [isLoadingTariffs, setIsLoadingTariffs] = useState(false);
   const [tariffsError, setTariffsError] = useState<string | null>(null);
   const [pagination, setPagination] = useState({ page: 1, limit: 50, total: 0, totalPages: 0 });
-  const [stats, setStats] = useState<Array<{ marketplace: string; deliveryMethod: string | null; count: number }>>([]);
-  const [filters, setFilters] = useState({ marketplace: "all", deliveryMethod: "all", search: "" });
+  const [stats, setStats] = useState<
+    Array<{ marketplace: string; deliveryMethod: string | null; priceBand?: string | null; count: number }>
+  >([]);
+  const [filters, setFilters] = useState({ marketplace: "all", deliveryMethod: "all", priceBand: "all", search: "" });
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selected = event.target.files?.[0] ?? null;
@@ -119,6 +124,7 @@ export default function ShippingTariffsUploadPage() {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("deliveryMethod", uploadDeliveryMethod);
+      formData.append("priceBand", uploadPriceBand);
 
       const response = await fetch("/api/shipping-tariffs/upload", {
         method: "POST",
@@ -203,6 +209,7 @@ export default function ShippingTariffsUploadPage() {
       });
       if (filters.marketplace && filters.marketplace !== "all") params.append("marketplace", filters.marketplace);
       if (filters.deliveryMethod && filters.deliveryMethod !== "all") params.append("deliveryMethod", filters.deliveryMethod);
+      if (filters.priceBand && filters.priceBand !== "all") params.append("priceBand", filters.priceBand);
       if (filters.search) params.append("search", filters.search);
 
       const response = await fetch(`/api/shipping-tariffs/list?${params}`);
@@ -231,7 +238,7 @@ export default function ShippingTariffsUploadPage() {
   // Обновляем при изменении фильтров
   useEffect(() => {
     loadTariffs(1);
-  }, [filters.marketplace, filters.deliveryMethod, filters.search]);
+  }, [filters.marketplace, filters.deliveryMethod, filters.priceBand, filters.search]);
 
   return (
     <div className="container mx-auto py-8 px-4">
@@ -274,6 +281,22 @@ export default function ShippingTariffsUploadPage() {
                   <SelectContent>
                     <SelectItem value="fbo">FBO</SelectItem>
                     <SelectItem value="fbs">FBS</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Сегмент тарифа (цена товара)</Label>
+                <Select
+                  value={uploadPriceBand}
+                  onValueChange={(value) => setUploadPriceBand(value as "up_to_300" | "over_300")}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Выберите сегмент" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="up_to_300">До 300 ₽</SelectItem>
+                    <SelectItem value="over_300">От 301 ₽</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -390,7 +413,7 @@ export default function ShippingTariffsUploadPage() {
           </CardHeader>
           <CardContent>
             {/* Фильтры */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
               <div className="space-y-2">
                 <Label>Маркетплейс</Label>
                 <Select
@@ -423,6 +446,22 @@ export default function ShippingTariffsUploadPage() {
                 </Select>
               </div>
               <div className="space-y-2">
+                <Label>Сегмент</Label>
+                <Select
+                  value={filters.priceBand}
+                  onValueChange={(value) => setFilters({ ...filters, priceBand: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Все сегменты" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Все сегменты</SelectItem>
+                    <SelectItem value="up_to_300">До 300 ₽</SelectItem>
+                    <SelectItem value="over_300">От 301 ₽</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
                 <Label>Поиск</Label>
                 <Input
                   placeholder="Регион, категория..."
@@ -437,7 +476,8 @@ export default function ShippingTariffsUploadPage() {
               <div className="mb-4 flex flex-wrap gap-2">
                 {stats.map((stat, idx) => (
                   <Badge key={idx} variant="outline">
-                    {stat.marketplace.toUpperCase()} / {stat.deliveryMethod?.toUpperCase() || "ALL"}: {stat.count}
+                    {stat.marketplace.toUpperCase()} / {stat.deliveryMethod?.toUpperCase() || "ALL"}
+                    {stat.priceBand ? ` / ${stat.priceBand === "up_to_300" ? "≤300" : "≥301"}` : ""}: {stat.count}
                   </Badge>
                 ))}
               </div>
@@ -467,6 +507,7 @@ export default function ShippingTariffsUploadPage() {
                         <th className="text-left py-3 px-2 font-medium">Маркетплейс</th>
                         <th className="text-left py-3 px-2 font-medium">Объём (л)</th>
                         <th className="text-left py-3 px-2 font-medium">Метод</th>
+                        <th className="text-left py-3 px-2 font-medium">Сегмент</th>
                         <th className="text-right py-3 px-2 font-medium">Стоимость (₽)</th>
                         <th className="text-left py-3 px-2 font-medium">Регион от</th>
                         <th className="text-left py-3 px-2 font-medium">Регион до</th>
@@ -489,6 +530,15 @@ export default function ShippingTariffsUploadPage() {
                           <td className="py-3 px-2">
                             {tariff.deliveryMethod ? (
                               <Badge>{tariff.deliveryMethod.toUpperCase()}</Badge>
+                            ) : (
+                              "-"
+                            )}
+                          </td>
+                          <td className="py-3 px-2">
+                            {tariff.priceBand ? (
+                              <Badge variant="outline">
+                                {tariff.priceBand === "up_to_300" ? "До 300 ₽" : "От 301 ₽"}
+                              </Badge>
                             ) : (
                               "-"
                             )}

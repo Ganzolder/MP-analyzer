@@ -185,6 +185,10 @@ model ShippingTariff {
   
   // Маркетплейс
   marketplace     String   @default("ozon") // ozon, wildberries, yandex-market
+
+  // Сегмент тарифа (чтобы не перетирать "до 300" и "от 301" при загрузке)
+  // Примеры: "up_to_300", "over_300"
+  priceBand       String?
   
   // Регионы
   fromRegion      String?  // Регион отправления
@@ -234,6 +238,7 @@ model ShippingTariff {
   @@index([weightMin, weightMax])
   @@index([isActive])
   @@index([priority])
+  @@index([marketplace, deliveryMethod, priceBand])
 }
 
 // Таблица категорий и комиссий маркетплейса (вознаграждение маркетплейса)
