@@ -287,7 +287,20 @@ export default function CategoryCommissionsUploadPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        {/* Настройка процента эквайринга */}
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="text-xl">Процент эквайринга</CardTitle>
+            <CardDescription>
+              Настройка процента эквайринга (комиссия за обработку платежей). Применяется ко всем транзакциям.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <AcquiringSettingsSection />
+          </CardContent>
+        </Card>
+
+        <Card className="mt-6">
           <CardHeader>
             <CardTitle className="text-lg">Как это используется</CardTitle>
             <CardDescription>
@@ -460,6 +473,118 @@ export default function CategoryCommissionsUploadPage() {
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+// Компонент для настройки эквайринга
+function AcquiringSettingsSection() {
+  const [acquiringPercent, setAcquiringPercent] = useState<number>(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
+  const loadSettings = async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch("/api/acquiring-settings?marketplace=ozon");
+      const data = await response.json();
+      if (data.success && data.data) {
+        setAcquiringPercent(data.data.acquiringPercent || 0);
+      }
+    } catch (err: any) {
+      console.error("Ошибка при загрузке настроек эквайринга:", err);
+      setError("Не удалось загрузить настройки эквайринга");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const response = await fetch("/api/acquiring-settings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          marketplace: "ozon",
+          acquiringPercent: acquiringPercent,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setSuccess(data.message || "Процент эквайринга успешно сохранён!");
+      } else {
+        setError(data.error || "Не удалось сохранить процент эквайринга.");
+      }
+    } catch (err: any) {
+      console.error("Ошибка при сохранении настроек эквайринга:", err);
+      setError(err.message || "Ошибка при сохранении настроек эквайринга.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  if (isLoading) {
+    return <div className="text-center py-4 text-muted-foreground">Загрузка...</div>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-4">
+        <div className="flex-1">
+          <Label htmlFor="acquiringPercent">Процент эквайринга (%)</Label>
+          <Input
+            id="acquiringPercent"
+            type="number"
+            step="0.01"
+            min="0"
+            max="100"
+            value={acquiringPercent}
+            onChange={(e) => {
+              const val = parseFloat(e.target.value);
+              if (!isNaN(val)) {
+                setAcquiringPercent(val);
+                setSuccess(null);
+                setError(null);
+              }
+            }}
+            className="mt-2"
+            placeholder="0.00"
+          />
+        </div>
+        <div className="flex items-end">
+          <Button onClick={handleSave} disabled={isSaving}>
+            {isSaving ? "Сохранение..." : "Сохранить"}
+          </Button>
+        </div>
+      </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertTitle>Ошибка</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {success && (
+        <Alert>
+          <AlertTitle>Успешно</AlertTitle>
+          <AlertDescription>{success}</AlertDescription>
+        </Alert>
+      )}
     </div>
   );
 }
