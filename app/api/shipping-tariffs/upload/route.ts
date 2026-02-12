@@ -518,11 +518,23 @@ export async function POST(request: NextRequest) {
           .replace(/\s+/g, " ")
           .replace(/,/g, ".");
 
+        // Конвертация литров в см³ с нормализацией до целого см³
+        const litersToCm3 = (liters: number): number => Math.round(liters * 1000);
+
+        // Чтобы диапазоны не пересекались, для нижней границы "от X" добавляем 0.001л (=1 см³),
+        // но только если X задан "ровно" (например 1л, 2л, 190л). Если X уже с дробной частью,
+        // не двигаем (например 0.201л уже корректно).
+        const bumpLowerBoundIfWholeLiter = (cm3: number): number => {
+          if (cm3 <= 0) return cm3;
+          return cm3 % 1000 === 0 ? cm3 + 1 : cm3;
+        };
+
         // Парсим "Более Xл" (например "Более 1000л")
         const moreThanMatch = normalized.match(/более\s*(\d+(?:\.\d+)?)\s*л?/i);
         if (moreThanMatch) {
           const min = parseFloat(moreThanMatch[1]);
-          return { volumeMin: min * 1000, volumeMax: null }; // Конвертируем литры в см³
+          const minCm3 = bumpLowerBoundIfWholeLiter(litersToCm3(min));
+          return { volumeMin: minCm3, volumeMax: null }; // см³
         }
         
         // Парсим "от Xл до Yл" (например "от 1л до 2л", "от 3л до 190л")
@@ -530,7 +542,9 @@ export async function POST(request: NextRequest) {
         if (fromToMatch) {
           const min = parseFloat(fromToMatch[1]);
           const max = parseFloat(fromToMatch[2]);
-          return { volumeMin: min * 1000, volumeMax: max * 1000 }; // Конвертируем литры в см³
+          const minCm3 = bumpLowerBoundIfWholeLiter(litersToCm3(min));
+          const maxCm3 = litersToCm3(max);
+          return { volumeMin: minCm3, volumeMax: maxCm3 }; // см³
         }
         
         // Парсим "от Xл - Yл" (например "от 190л - 1000л") - дефис вместо "до"
@@ -538,7 +552,9 @@ export async function POST(request: NextRequest) {
         if (fromDashMatch) {
           const min = parseFloat(fromDashMatch[1]);
           const max = parseFloat(fromDashMatch[2]);
-          return { volumeMin: min * 1000, volumeMax: max * 1000 }; // Конвертируем литры в см³
+          const minCm3 = bumpLowerBoundIfWholeLiter(litersToCm3(min));
+          const maxCm3 = litersToCm3(max);
+          return { volumeMin: minCm3, volumeMax: maxCm3 }; // см³
         }
 
         // Парсим "До Xл" (например "До 1л")
@@ -546,14 +562,16 @@ export async function POST(request: NextRequest) {
         const upToMatch = normalized.match(/^\s*до\s*(\d+(?:\.\d+)?)\s*л?/i);
         if (upToMatch) {
           const max = parseFloat(upToMatch[1]);
-          return { volumeMin: 0, volumeMax: max * 1000 }; // Конвертируем литры в см³
+          const maxCm3 = litersToCm3(max);
+          return { volumeMin: 0, volumeMax: maxCm3 }; // см³
         }
         
         // Парсим "от X.XXX л" (например "от 190.001 л") - без верхней границы
         const fromMatch = normalized.match(/от\s*(\d+(?:\.\d+)?)\s*л?/i);
         if (fromMatch) {
           const min = parseFloat(fromMatch[1]);
-          return { volumeMin: min * 1000, volumeMax: null }; // Конвертируем литры в см³
+          const minCm3 = bumpLowerBoundIfWholeLiter(litersToCm3(min));
+          return { volumeMin: minCm3, volumeMax: null }; // см³
         }
 
         // Парсим диапазон "X - Y л" / "X–Y л"
@@ -561,7 +579,9 @@ export async function POST(request: NextRequest) {
         if (rangeMatch) {
           const min = parseFloat(rangeMatch[1]);
           const max = parseFloat(rangeMatch[2]);
-          return { volumeMin: min * 1000, volumeMax: max * 1000 }; // Конвертируем литры в см³
+          const minCm3 = litersToCm3(min);
+          const maxCm3 = litersToCm3(max);
+          return { volumeMin: minCm3, volumeMax: maxCm3 }; // см³
         }
 
         // Фолбэк: если есть хотя бы 2 числа, считаем их min/max
@@ -569,14 +589,17 @@ export async function POST(request: NextRequest) {
         if (allNumbers && allNumbers.length >= 2) {
           const min = parseFloat(allNumbers[0]);
           const max = parseFloat(allNumbers[1]);
-          return { volumeMin: min * 1000, volumeMax: max * 1000 };
+          const minCm3 = litersToCm3(min);
+          const maxCm3 = litersToCm3(max);
+          return { volumeMin: minCm3, volumeMax: maxCm3 };
         }
 
         // Если просто число с "л" в конце
         const numMatch = normalized.match(/(\d+(?:\.\d+)?)\s*л?/i);
         if (numMatch) {
           const num = parseFloat(numMatch[1]);
-          return { volumeMin: num * 1000, volumeMax: num * 1000 }; // Конвертируем литры в см³
+          const cm3 = litersToCm3(num);
+          return { volumeMin: cm3, volumeMax: cm3 }; // см³
         }
         
         return { volumeMin: null, volumeMax: null };
