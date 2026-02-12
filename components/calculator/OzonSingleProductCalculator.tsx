@@ -160,10 +160,10 @@ export function OzonSingleProductCalculator() {
             />
           </div>
 
-          {/* Категория */}
+          {/* Тип товара */}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <Label htmlFor="category">Категория / Тип товара</Label>
+              <Label htmlFor="category">Тип товара</Label>
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -171,7 +171,7 @@ export function OzonSingleProductCalculator() {
                   </TooltipTrigger>
                   <TooltipContent>
                     <p>
-                      Категория и тип товара подбираются автоматически по названию из базы данных комиссий.
+                      Тип товара подбирается автоматически по названию из базы данных комиссий (столбец "Тип товара").
                       Вы можете изменить выбор вручную.
                     </p>
                   </TooltipContent>
@@ -191,39 +191,18 @@ export function OzonSingleProductCalculator() {
                       : !productName || productName.trim().length < 2
                         ? "Введите название товара (минимум 2 символа)"
                         : categoryOptions.length === 0
-                          ? "Категория не найдена"
-                          : "Выберите категорию или тип товара"
+                          ? "Тип товара не найден"
+                          : "Выберите тип товара"
                   }
                 />
               </SelectTrigger>
               <SelectContent>
                 {categoryOptions.length > 0 ? (
-                  <>
-                    {categoryOptions.filter((opt) => opt.type === "category").length > 0 && (
-                      <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
-                        Категории
-                      </div>
-                    )}
-                    {categoryOptions
-                      .filter((opt) => opt.type === "category")
-                      .map((opt) => (
-                        <SelectItem key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </SelectItem>
-                      ))}
-                    {categoryOptions.filter((opt) => opt.type === "productType").length > 0 && (
-                      <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground mt-2">
-                        Типы товаров
-                      </div>
-                    )}
-                    {categoryOptions
-                      .filter((opt) => opt.type === "productType")
-                      .map((opt) => (
-                        <SelectItem key={opt.value} value={opt.value}>
-                          {opt.label}
-                        </SelectItem>
-                      ))}
-                  </>
+                  categoryOptions.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))
                 ) : (
                   <div className="px-2 py-1.5 text-sm text-muted-foreground">
                     {isSearching

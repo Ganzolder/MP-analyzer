@@ -3,14 +3,14 @@ import prisma from "@/lib/db/prisma";
 
 /**
  * GET /api/category-commissions/search
- * Поиск категорий и типов товаров по названию
+ * Поиск типов товаров по названию (только по столбцу productType)
  */
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const query = searchParams.get("q") || "";
     const marketplace = (searchParams.get("marketplace") || "ozon").toLowerCase();
-    const limit = parseInt(searchParams.get("limit") || "20");
+    const limit = parseInt(searchParams.get("limit") || "50"); // Увеличиваем лимит
 
     if (!query || query.trim().length < 2) {
       return NextResponse.json({
@@ -20,60 +20,104 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const searchTerm = `%${query.toLowerCase()}%`;
+    const queryLower = query.toLowerCase().trim();
+    const words = queryLower.split(/\s+/).filter((w) => w.length > 0);
 
-    // Поиск по categoryName и productType (используем raw query для case-insensitive поиска)
+    // Строим SQL условия поиска: ищем по каждому слову отдельно
+    // Это позволит найти "легковые шины" даже если в БД записано "Шины для легковых автомобилей"
+    const searchPattern = `%${queryLower}%`;
+    const wordPatterns = words.map((word) => `%${word}%`);
+
+    // Поиск ТОЛЬКО по productType (столбец "Тип товара")
+    // Используем простой LIKE для основного запроса и дополнительную фильтрацию в JS
     const results = await prisma.$queryRaw<Array<{
-      categoryName: string | null;
       productType: string | null;
+      categoryName: string | null;
       categoryId: string | null;
-      categoryPath: string | null;
     }>>`
-      SELECT DISTINCT "categoryName", "productType", "categoryId", "categoryPath"
+      SELECT DISTINCT "productType", "categoryName", "categoryId"
       FROM "CategoryCommission"
       WHERE "marketplace" = ${marketplace}
         AND "isActive" = true
-        AND (
-          LOWER("categoryName") LIKE ${searchTerm}
-          OR LOWER("productType") LIKE ${searchTerm}
-        )
-      ORDER BY "categoryName" ASC, "productType" ASC
-      LIMIT ${limit}
+        AND "productType" IS NOT NULL
+        AND "productType" != ''
+        AND LOWER("productType") LIKE ${searchPattern}
+      ORDER BY 
+        CASE 
+          WHEN LOWER("productType") LIKE ${`${queryLower}%`} THEN 1
+          WHEN LOWER("productType") LIKE ${searchPattern} THEN 2
+          ELSE 3
+        END,
+        "productType" ASC
+      LIMIT ${limit * 3}
     `;
 
-    // Формируем уникальный список категорий и типов товаров
-    const categories = new Set<string>();
-    const productTypes = new Set<string>();
+    // Дополнительная фильтрация: проверяем, что все слова запроса присутствуют в типе товара
+    const filteredResults = results.filter((item) => {
+      if (!item.productType) return false;
+      const typeLower = item.productType.toLowerCase();
+      // Проверяем, что все слова запроса присутствуют в типе товара
+      return words.every((word) => typeLower.includes(word));
+    });
 
-    results.forEach((item) => {
-      if (item.categoryName) {
-        categories.add(item.categoryName);
-      }
-      if (item.productType) {
-        productTypes.add(item.productType);
+    // Формируем уникальный список типов товаров
+    const productTypes = new Set<string>();
+    const productTypeMap = new Map<string, { categoryName: string | null; categoryId: string | null }>();
+
+    filteredResults.forEach((item) => {
+      if (item.productType && item.productType.trim()) {
+        const type = item.productType.trim();
+        productTypes.add(type);
+        // Сохраняем первую встретившуюся категорию для этого типа товара
+        if (!productTypeMap.has(type)) {
+          productTypeMap.set(type, {
+            categoryName: item.categoryName,
+            categoryId: item.categoryId,
+          });
+        }
       }
     });
 
-    // Объединяем результаты, приоритет - точное совпадение в начале
-    const allResults = [
-      ...Array.from(categories).map((name) => ({
-        value: `category:${name}`,
-        label: name,
-        type: "category" as const,
-      })),
-      ...Array.from(productTypes).map((type) => ({
+    // Преобразуем в массив результатов
+    const allResults = Array.from(productTypes).map((type) => {
+      const meta = productTypeMap.get(type);
+      return {
         value: `productType:${type}`,
         label: type,
         type: "productType" as const,
-      })),
-    ];
+        categoryName: meta?.categoryName || null,
+        categoryId: meta?.categoryId || null,
+      };
+    });
 
-    // Сортируем: сначала те, что начинаются с запроса
+    // Улучшенная сортировка: приоритет точным совпадениям и совпадениям в начале
     allResults.sort((a, b) => {
-      const aStarts = a.label.toLowerCase().startsWith(query.toLowerCase());
-      const bStarts = b.label.toLowerCase().startsWith(query.toLowerCase());
+      const aLower = a.label.toLowerCase();
+      const bLower = b.label.toLowerCase();
+      const queryLower = query.toLowerCase();
+
+      // Точное совпадение
+      if (aLower === queryLower && bLower !== queryLower) return -1;
+      if (bLower === queryLower && aLower !== queryLower) return 1;
+
+      // Начинается с запроса
+      const aStarts = aLower.startsWith(queryLower);
+      const bStarts = bLower.startsWith(queryLower);
       if (aStarts && !bStarts) return -1;
       if (!aStarts && bStarts) return 1;
+
+      // Содержит все слова запроса
+      const aHasAllWords = words.every((word) => aLower.includes(word));
+      const bHasAllWords = words.every((word) => bLower.includes(word));
+      if (aHasAllWords && !bHasAllWords) return -1;
+      if (!aHasAllWords && bHasAllWords) return 1;
+
+      // По длине (короче = лучше)
+      if (aLower.length !== bLower.length) {
+        return aLower.length - bLower.length;
+      }
+
+      // Лексикографическая сортировка
       return a.label.localeCompare(b.label, "ru");
     });
 
@@ -81,13 +125,14 @@ export async function GET(request: NextRequest) {
       success: true,
       data: allResults.slice(0, limit),
       count: allResults.length,
+      query: query,
     });
   } catch (error: any) {
-    console.error("❌ [API] Ошибка при поиске категорий:", error);
+    console.error("❌ [API] Ошибка при поиске типов товаров:", error);
     return NextResponse.json(
       {
         success: false,
-        error: error.message || "Ошибка при поиске категорий",
+        error: error.message || "Ошибка при поиске типов товаров",
         data: [],
       },
       { status: 500 }
