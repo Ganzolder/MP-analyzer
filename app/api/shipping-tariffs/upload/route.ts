@@ -459,6 +459,14 @@ export async function POST(request: NextRequest) {
     // Парсим данные (начинаем со строки после заголовков)
     const tariffs = [];
     const errors: string[] = [];
+    const debugSample: Array<{
+      rowNum: number;
+      rawVolume: any;
+      rawPrice: any;
+      volumeMin: number | null;
+      volumeMax: number | null;
+      basePrice: number | null;
+    }> = [];
     const BATCH_SIZE = 1000; // Вставляем по 1000 записей за раз
 
     // Если заголовок в 2 строки — начинаем после второй строки
@@ -625,6 +633,18 @@ export async function POST(request: NextRequest) {
           if (rowNum <= 3) {
             console.log(`📋 [API] Строка ${rowNum}: объём "${rawVolumeValue}" → min: ${volumeMin}, max: ${volumeMax}`);
           }
+
+          // Сохраняем sample в ответ (первые 10)
+          if (debugSample.length < 10) {
+            debugSample.push({
+              rowNum,
+              rawVolume: rawVolumeValue,
+              rawPrice: row[indices.basePrice],
+              volumeMin,
+              volumeMax,
+              basePrice,
+            });
+          }
         } else {
           // Если нет колонки с диапазоном, используем отдельные колонки
           volumeMin = parseNumber(row[indices.volumeMin]);
@@ -744,6 +764,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       message: `Загружено ${inserted} тарифов из ${tariffs.length}`,
+      detected: {
+        marketplace: "ozon",
+        deliveryMethod: detectedDeliveryMethod,
+        priceBand: detectedPriceBand,
+        sheet: detectedSheetName,
+        headerRows: detectedHeaderRows,
+      },
       stats: {
         total: tariffs.length,
         inserted,
@@ -752,6 +779,7 @@ export async function POST(request: NextRequest) {
       },
       errors: errors.slice(0, 100), // Первые 100 ошибок парсинга
       insertErrors: insertErrors.slice(0, 50), // Первые 50 ошибок вставки
+      debugSample,
     });
   } catch (error: any) {
     console.error("❌ [API] Ошибка при загрузке тарифов:", error);
