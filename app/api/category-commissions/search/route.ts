@@ -1,3 +1,6 @@
+import { NextRequest, NextResponse } from "next/server";
+import prisma from "@/lib/db/prisma";
+
 /**
  * GET /api/category-commissions/search
  * Смысловой поиск по столбцам productType и categoryName из таблицы CategoryCommission.
