@@ -23,40 +23,42 @@ export async function GET(request: NextRequest) {
     const queryLower = query.toLowerCase().trim();
     const words = queryLower.split(/\s+/).filter((w) => w.length > 0);
 
-    // Используем raw SQL для надежного case-insensitive поиска
-    // Ищем записи, где productType содержит хотя бы одно слово из запроса
-    const searchPattern = `%${queryLower}%`;
-    
-    const results = await prisma.$queryRaw<Array<{
-      productType: string | null;
-      categoryName: string | null;
-      categoryId: string | null;
-    }>>`
-      SELECT DISTINCT "productType", "categoryName", "categoryId"
-      FROM "CategoryCommission"
-      WHERE "marketplace" = ${marketplace}
-        AND "isActive" = true
-        AND "productType" IS NOT NULL
-        AND TRIM("productType") != ''
-        AND LOWER("productType") LIKE ${searchPattern}
-      ORDER BY 
-        CASE 
-          WHEN LOWER("productType") = ${queryLower} THEN 1
-          WHEN LOWER("productType") LIKE ${`${queryLower}%`} THEN 2
-          WHEN LOWER("productType") LIKE ${searchPattern} THEN 3
-          ELSE 4
-        END,
-        "productType" ASC
-      LIMIT ${limit * 3}
-    `;
+    console.log(`🔍 [SEARCH] Поиск по запросу: "${query}" (слова: ${words.join(", ")})`);
 
-    // Дополнительная фильтрация: проверяем, что все слова запроса присутствуют в типе товара
-    const filteredResults = results.filter((item) => {
+    // Получаем все активные типы товаров из базы
+    // Используем простой запрос без фильтрации по словам на уровне SQL
+    // Фильтрацию делаем в JavaScript для большей гибкости
+    const allRecords = await prisma.categoryCommission.findMany({
+      where: {
+        marketplace,
+        isActive: true,
+        productType: {
+          not: null,
+        },
+      },
+      select: {
+        productType: true,
+        categoryName: true,
+        categoryId: true,
+      },
+      take: 1000, // Берем больше записей для фильтрации
+    });
+
+    console.log(`📊 [SEARCH] Всего записей в БД: ${allRecords.length}`);
+
+    // Фильтруем в JavaScript: ищем записи, где productType содержит все слова запроса
+    const filteredResults = allRecords.filter((item) => {
       if (!item.productType) return false;
       const typeLower = item.productType.toLowerCase().trim();
       // Проверяем, что все слова запроса присутствуют в типе товара
-      return words.every((word) => typeLower.includes(word));
+      const hasAllWords = words.every((word) => typeLower.includes(word));
+      if (hasAllWords) {
+        console.log(`✅ [SEARCH] Совпадение: "${item.productType}"`);
+      }
+      return hasAllWords;
     });
+
+    console.log(`📊 [SEARCH] Найдено записей после фильтрации: ${filteredResults.length}`);
 
     // Формируем уникальный список типов товаров
     const productTypes = new Set<string>();
