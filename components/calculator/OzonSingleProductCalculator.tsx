@@ -63,7 +63,7 @@ export function OzonSingleProductCalculator() {
       setIsSearching(true);
       try {
         const response = await fetch(
-          `/api/category-commissions/search?q=${encodeURIComponent(productName)}&marketplace=ozon&limit=10`
+          `/api/category-commissions/search?q=${encodeURIComponent(productName)}&marketplace=ozon&limit=30`
         );
         const data = await response.json();
 
@@ -75,15 +75,9 @@ export function OzonSingleProductCalculator() {
           }));
           setCategoryOptions(options);
 
-          // Автоматически выбираем первую найденную категорию, если категория ещё не выбрана
+          // Автоматически выбираем первый результат, если ещё ничего не выбрано
           if (!category && options.length > 0) {
-            // Приоритет: сначала категории, потом типы товаров
-            const categoryOption = options.find((opt) => opt.type === "category");
-            if (categoryOption) {
-              setCategory(categoryOption.value);
-            } else if (options[0]) {
-              setCategory(options[0].value);
-            }
+            setCategory(options[0].value);
           }
         } else {
           setCategoryOptions([]);
@@ -160,10 +154,10 @@ export function OzonSingleProductCalculator() {
             />
           </div>
 
-          {/* Тип товара */}
+          {/* Категория / Тип товара */}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <Label htmlFor="category">Тип товара</Label>
+              <Label htmlFor="category">Категория</Label>
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -171,8 +165,8 @@ export function OzonSingleProductCalculator() {
                   </TooltipTrigger>
                   <TooltipContent>
                     <p>
-                      Тип товара подбирается автоматически по названию из базы данных комиссий (столбец "Тип товара").
-                      Вы можете изменить выбор вручную.
+                      Категория подбирается автоматически по названию товара из базы комиссий.
+                      Поиск идёт по столбцам «Тип товара» и «Категория». Вы можете изменить выбор вручную.
                     </p>
                   </TooltipContent>
                 </Tooltip>
@@ -191,25 +185,46 @@ export function OzonSingleProductCalculator() {
                       : !productName || productName.trim().length < 2
                         ? "Введите название товара (минимум 2 символа)"
                         : categoryOptions.length === 0
-                          ? "Тип товара не найден"
-                          : "Выберите тип товара"
+                          ? "Ничего не найдено"
+                          : "Выберите категорию"
                   }
                 />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="max-h-80">
                 {categoryOptions.length > 0 ? (
-                  categoryOptions.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))
+                  <>
+                    {categoryOptions.filter((o) => o.type === "productType").length > 0 && (
+                      <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                        Типы товаров
+                      </div>
+                    )}
+                    {categoryOptions
+                      .filter((o) => o.type === "productType")
+                      .map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    {categoryOptions.filter((o) => o.type === "category").length > 0 && (
+                      <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground mt-1 border-t pt-1.5">
+                        Категории
+                      </div>
+                    )}
+                    {categoryOptions
+                      .filter((o) => o.type === "category")
+                      .map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                  </>
                 ) : (
                   <div className="px-2 py-1.5 text-sm text-muted-foreground">
                     {isSearching
                       ? "Поиск..."
                       : !productName || productName.trim().length < 2
                         ? "Введите название товара для поиска"
-                        : "Ничего не найдено"}
+                        : "Ничего не найдено в базе комиссий"}
                   </div>
                 )}
               </SelectContent>

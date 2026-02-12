@@ -3,14 +3,14 @@ import prisma from "@/lib/db/prisma";
 
 /**
  * GET /api/category-commissions/search
- * Поиск типов товаров по названию (только по столбцу productType)
+ * Поиск по столбцам productType и categoryName из таблицы CategoryCommission
  */
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const query = searchParams.get("q") || "";
     const marketplace = (searchParams.get("marketplace") || "ozon").toLowerCase();
-    const limit = parseInt(searchParams.get("limit") || "50"); // Увеличиваем лимит
+    const limit = parseInt(searchParams.get("limit") || "50");
 
     if (!query || query.trim().length < 2) {
       return NextResponse.json({
@@ -23,78 +23,96 @@ export async function GET(request: NextRequest) {
     const queryLower = query.toLowerCase().trim();
     const words = queryLower.split(/\s+/).filter((w) => w.length > 0);
 
-    console.log(`🔍 [SEARCH] Поиск по запросу: "${query}" (слова: ${words.join(", ")})`);
+    console.log(`🔍 [SEARCH] Поиск: "${query}", слова: [${words.join(", ")}], marketplace: ${marketplace}`);
 
-    // Получаем все активные типы товаров из базы
-    // Используем простой запрос без фильтрации по словам на уровне SQL
-    // Фильтрацию делаем в JavaScript для большей гибкости
-    const allRecords = await prisma.categoryCommission.findMany({
-      where: {
-        marketplace,
-        isActive: true,
-        productType: {
-          not: null,
-        },
-      },
-      select: {
-        productType: true,
-        categoryName: true,
-        categoryId: true,
-      },
-      take: 1000, // Берем больше записей для фильтрации
-    });
+    // Получаем уникальные пары categoryName + productType из БД
+    const allRecords = await prisma.$queryRawUnsafe<Array<{
+      categoryName: string | null;
+      productType: string | null;
+    }>>(
+      `SELECT DISTINCT "categoryName", "productType"
+       FROM "CategoryCommission"
+       WHERE "marketplace" = $1
+         AND "isActive" = true
+       ORDER BY "categoryName" ASC, "productType" ASC`,
+      marketplace
+    );
 
-    console.log(`📊 [SEARCH] Всего записей в БД: ${allRecords.length}`);
+    console.log(`📊 [SEARCH] Уникальных пар categoryName+productType в БД: ${allRecords.length}`);
 
-    // Фильтруем в JavaScript: ищем записи, где productType содержит все слова запроса
-    const filteredResults = allRecords.filter((item) => {
-      if (!item.productType) return false;
-      const typeLower = item.productType.toLowerCase().trim();
-      // Проверяем, что все слова запроса присутствуют в типе товара
-      const hasAllWords = words.every((word) => typeLower.includes(word));
-      if (hasAllWords) {
-        console.log(`✅ [SEARCH] Совпадение: "${item.productType}"`);
-      }
-      return hasAllWords;
-    });
+    // Собираем уникальные значения productType и categoryName
+    const uniqueProductTypes = new Set<string>();
+    const uniqueCategories = new Set<string>();
+    // Маппинг productType -> categoryName
+    const ptToCategoryMap = new Map<string, string>();
 
-    console.log(`📊 [SEARCH] Найдено записей после фильтрации: ${filteredResults.length}`);
-
-    // Формируем уникальный список типов товаров
-    const productTypes = new Set<string>();
-    const productTypeMap = new Map<string, { categoryName: string | null; categoryId: string | null }>();
-
-    filteredResults.forEach((item) => {
-      if (item.productType && item.productType.trim()) {
-        const type = item.productType.trim();
-        productTypes.add(type);
-        // Сохраняем первую встретившуюся категорию для этого типа товара
-        if (!productTypeMap.has(type)) {
-          productTypeMap.set(type, {
-            categoryName: item.categoryName,
-            categoryId: item.categoryId,
-          });
+    allRecords.forEach((r) => {
+      if (r.productType && r.productType.trim()) {
+        const pt = r.productType.trim();
+        uniqueProductTypes.add(pt);
+        if (r.categoryName && !ptToCategoryMap.has(pt)) {
+          ptToCategoryMap.set(pt, r.categoryName.trim());
         }
       }
+      if (r.categoryName && r.categoryName.trim()) {
+        uniqueCategories.add(r.categoryName.trim());
+      }
     });
 
-    // Преобразуем в массив результатов
-    const allResults = Array.from(productTypes).map((type) => {
-      const meta = productTypeMap.get(type);
-      return {
-        value: `productType:${type}`,
-        label: type,
-        type: "productType" as const,
-        categoryName: meta?.categoryName || null,
-        categoryId: meta?.categoryId || null,
-      };
+    console.log(`📊 [SEARCH] Уникальных productType: ${uniqueProductTypes.size}, categoryName: ${uniqueCategories.size}`);
+
+    // Ищем совпадения по productType (приоритет)
+    const matchingProductTypes = Array.from(uniqueProductTypes).filter((pt) => {
+      const ptLower = pt.toLowerCase();
+      return words.every((word) => ptLower.includes(word));
     });
 
-    // Улучшенная сортировка: приоритет точным совпадениям и совпадениям в начале
+    // Ищем совпадения по categoryName (если в productType не нашли)
+    const matchingCategories = Array.from(uniqueCategories).filter((cat) => {
+      const catLower = cat.toLowerCase();
+      return words.every((word) => catLower.includes(word));
+    });
+
+    console.log(`📊 [SEARCH] Совпадений productType: ${matchingProductTypes.length}, categoryName: ${matchingCategories.length}`);
+
+    // Объединяем результаты: сначала productType, потом categoryName
+    const allResults: Array<{
+      value: string;
+      label: string;
+      type: "productType" | "category";
+      categoryName: string | null;
+    }> = [];
+
+    matchingProductTypes.forEach((pt) => {
+      allResults.push({
+        value: `productType:${pt}`,
+        label: pt,
+        type: "productType",
+        categoryName: ptToCategoryMap.get(pt) || null,
+      });
+    });
+
+    // Добавляем categoryName только если они ещё не представлены как productType
+    const ptLabels = new Set(matchingProductTypes.map((pt) => pt.toLowerCase()));
+    matchingCategories.forEach((cat) => {
+      if (!ptLabels.has(cat.toLowerCase())) {
+        allResults.push({
+          value: `category:${cat}`,
+          label: cat,
+          type: "category",
+          categoryName: cat,
+        });
+      }
+    });
+
+    // Сортировка: точные → начинаются с запроса → содержат все слова → короче → алфавит
     allResults.sort((a, b) => {
       const aLower = a.label.toLowerCase();
       const bLower = b.label.toLowerCase();
-      const queryLower = query.toLowerCase();
+
+      // productType приоритетнее category
+      if (a.type === "productType" && b.type === "category") return -1;
+      if (a.type === "category" && b.type === "productType") return 1;
 
       // Точное совпадение
       if (aLower === queryLower && bLower !== queryLower) return -1;
@@ -106,18 +124,9 @@ export async function GET(request: NextRequest) {
       if (aStarts && !bStarts) return -1;
       if (!aStarts && bStarts) return 1;
 
-      // Содержит все слова запроса
-      const aHasAllWords = words.every((word) => aLower.includes(word));
-      const bHasAllWords = words.every((word) => bLower.includes(word));
-      if (aHasAllWords && !bHasAllWords) return -1;
-      if (!aHasAllWords && bHasAllWords) return 1;
-
       // По длине (короче = лучше)
-      if (aLower.length !== bLower.length) {
-        return aLower.length - bLower.length;
-      }
+      if (aLower.length !== bLower.length) return aLower.length - bLower.length;
 
-      // Лексикографическая сортировка
       return a.label.localeCompare(b.label, "ru");
     });
 
@@ -126,13 +135,22 @@ export async function GET(request: NextRequest) {
       data: allResults.slice(0, limit),
       count: allResults.length,
       query: query,
+      debug: {
+        totalRecordsInDb: allRecords.length,
+        uniqueProductTypes: uniqueProductTypes.size,
+        uniqueCategories: uniqueCategories.size,
+        matchingProductTypes: matchingProductTypes.length,
+        matchingCategories: matchingCategories.length,
+        sampleProductTypes: Array.from(uniqueProductTypes).slice(0, 5),
+        sampleCategories: Array.from(uniqueCategories).slice(0, 5),
+      },
     });
   } catch (error: any) {
-    console.error("❌ [API] Ошибка при поиске типов товаров:", error);
+    console.error("❌ [API] Ошибка при поиске:", error);
     return NextResponse.json(
       {
         success: false,
-        error: error.message || "Ошибка при поиске типов товаров",
+        error: error.message || "Ошибка при поиске",
         data: [],
       },
       { status: 500 }
