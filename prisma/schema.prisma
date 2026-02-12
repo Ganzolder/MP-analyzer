@@ -241,6 +241,23 @@ model ShippingTariff {
   @@index([marketplace, deliveryMethod, priceBand])
 }
 
+// Тарифы обработки отправлений по типам точек отгрузки
+model ProcessingTariff {
+  id                    String   @id @default(cuid())
+  marketplace            String   @default("ozon")
+  shipmentPointType      String   // Тип точки отгрузки: АПВЗ, АППЗ, ППЗ, ППЗ Горбушка
+  ozonProcessingFee      Float    // Тариф за обработку отправления Ozon (руб)
+  partnerProcessingFee   Float    // Тариф за обработку отправления партнёрами (руб)
+  isActive               Boolean  @default(true)
+  notes                  String?  // Примечания (например, "только УТК Садовод, Люблино, Фуд Сити в Москве")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@unique([marketplace, shipmentPointType])
+  @@index([marketplace, shipmentPointType])
+  @@index([isActive])
+}
+
 // Таблица категорий и комиссий маркетплейса (вознаграждение маркетплейса)
 model CategoryCommission {
   id           String   @id @default(cuid())

@@ -43,6 +43,9 @@ export function Header() {
           <NavLink href="/admin/shipping-tariffs">
             Тарифы
           </NavLink>
+          <NavLink href="/admin/processing-tariffs">
+            Обработка
+          </NavLink>
           <NavLink href="/settings" badge="Скоро">
             Настройки
           </NavLink>
@@ -88,6 +91,9 @@ export function Header() {
             </MobileNavLink>
             <MobileNavLink href="/admin/shipping-tariffs" icon={<Package className="h-4 w-4" />} onClick={() => setIsMenuOpen(false)}>
               Тарифы
+            </MobileNavLink>
+            <MobileNavLink href="/admin/processing-tariffs" icon={<Settings className="h-4 w-4" />} onClick={() => setIsMenuOpen(false)}>
+              Обработка
             </MobileNavLink>
             <MobileNavLink href="/settings" icon={<Settings className="h-4 w-4" />} badge="Скоро" onClick={() => setIsMenuOpen(false)}>
               Настройки
