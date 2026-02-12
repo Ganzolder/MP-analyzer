@@ -16,6 +16,12 @@ interface ProcessingTariff {
   notes?: string | null;
 }
 
+interface DispatchTariff {
+  id?: string;
+  shipmentPointGroup: string; // ПВЗ/ППЗ, СЦ
+  dispatchFee: number;
+}
+
 const DEFAULT_TARIFFS: ProcessingTariff[] = [
   {
     shipmentPointType: "АПВЗ",
@@ -43,6 +49,11 @@ const DEFAULT_TARIFFS: ProcessingTariff[] = [
   },
 ];
 
+const DEFAULT_DISPATCH_TARIFFS: DispatchTariff[] = [
+  { shipmentPointGroup: "ПВЗ/ППЗ", dispatchFee: 30 },
+  { shipmentPointGroup: "СЦ", dispatchFee: 20 },
+];
+
 export default function ProcessingTariffsPage() {
   const [tariffs, setTariffs] = useState<ProcessingTariff[]>(DEFAULT_TARIFFS);
   const [isLoading, setIsLoading] = useState(true);
@@ -50,9 +61,15 @@ export default function ProcessingTariffsPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
+  // Вторая таблица: тарифы за отправление
+  const [dispatchTariffs, setDispatchTariffs] = useState<DispatchTariff[]>(DEFAULT_DISPATCH_TARIFFS);
+  const [isLoadingDispatch, setIsLoadingDispatch] = useState(true);
+  const [isSavingDispatch, setIsSavingDispatch] = useState(false);
+
   // Загружаем тарифы при монтировании
   useEffect(() => {
     loadTariffs();
+    loadDispatchTariffs();
   }, []);
 
   const loadTariffs = async () => {
@@ -99,6 +116,45 @@ export default function ProcessingTariffsPage() {
     setError(null);
   };
 
+  const loadDispatchTariffs = async () => {
+    setIsLoadingDispatch(true);
+    try {
+      const response = await fetch("/api/dispatch-tariffs?marketplace=ozon");
+      const data = await response.json();
+
+      if (data.success && data.data && data.data.length > 0) {
+        const sorted = DEFAULT_DISPATCH_TARIFFS.map((defaultTariff) => {
+          const found = data.data.find(
+            (t: DispatchTariff) => t.shipmentPointGroup === defaultTariff.shipmentPointGroup
+          );
+          return found || defaultTariff;
+        });
+        setDispatchTariffs(sorted);
+      } else {
+        setDispatchTariffs(DEFAULT_DISPATCH_TARIFFS);
+      }
+    } catch (err: any) {
+      console.error("Ошибка при загрузке тарифов за отправление:", err);
+      setDispatchTariffs(DEFAULT_DISPATCH_TARIFFS);
+    } finally {
+      setIsLoadingDispatch(false);
+    }
+  };
+
+  const handleDispatchChange = (index: number, value: string) => {
+    const numValue = parseFloat(value);
+    if (isNaN(numValue)) return;
+
+    const updated = [...dispatchTariffs];
+    updated[index] = {
+      ...updated[index],
+      dispatchFee: numValue,
+    };
+    setDispatchTariffs(updated);
+    setSuccess(null);
+    setError(null);
+  };
+
   const handleSave = async () => {
     setIsSaving(true);
     setError(null);
@@ -135,6 +191,42 @@ export default function ProcessingTariffsPage() {
       setError(err.message || "Ошибка при сохранении тарифов.");
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleSaveDispatch = async () => {
+    setIsSavingDispatch(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const response = await fetch("/api/dispatch-tariffs", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          marketplace: "ozon",
+          tariffs: dispatchTariffs.map((t) => ({
+            shipmentPointGroup: t.shipmentPointGroup,
+            dispatchFee: t.dispatchFee,
+          })),
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setSuccess(data.message || "Тарифы за отправление успешно сохранены!");
+        await loadDispatchTariffs();
+      } else {
+        setError(data.error || "Не удалось сохранить тарифы за отправление.");
+      }
+    } catch (err: any) {
+      console.error("Ошибка при сохранении тарифов за отправление:", err);
+      setError(err.message || "Ошибка при сохранении тарифов за отправление.");
+    } finally {
+      setIsSavingDispatch(false);
     }
   };
 
@@ -219,6 +311,60 @@ export default function ProcessingTariffsPage() {
                     <AlertDescription>{success}</AlertDescription>
                   </Alert>
                 )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Вторая таблица: Тарифы за отправление */}
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="text-2xl">Тарифы за отправление</CardTitle>
+            <CardDescription>
+              Управление тарифами за отправление по типам точек отгрузки (ПВЗ/ППЗ, СЦ). Изменения сохраняются в базу данных.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isLoadingDispatch ? (
+              <div className="text-center py-8 text-muted-foreground">Загрузка данных...</div>
+            ) : (
+              <>
+                <div className="overflow-x-auto mb-6">
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr className="border-b">
+                        <th className="text-left py-3 px-4 font-medium">Тип точки отгрузки</th>
+                        <th className="text-right py-3 px-4 font-medium">Тариф за отправление (₽)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dispatchTariffs.map((tariff, index) => (
+                        <tr key={index} className="border-b hover:bg-muted/30">
+                          <td className="py-3 px-4 font-medium">{tariff.shipmentPointGroup}</td>
+                          <td className="py-3 px-4">
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={tariff.dispatchFee}
+                              onChange={(e) => handleDispatchChange(index, e.target.value)}
+                              className="text-right w-24 ml-auto"
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex gap-3 justify-end">
+                  <Button variant="outline" onClick={loadDispatchTariffs} disabled={isSavingDispatch}>
+                    Отменить
+                  </Button>
+                  <Button onClick={handleSaveDispatch} disabled={isSavingDispatch}>
+                    {isSavingDispatch ? "Сохранение..." : "Сохранить"}
+                  </Button>
+                </div>
               </>
             )}
           </CardContent>

@@ -258,6 +258,22 @@ model ProcessingTariff {
   @@index([isActive])
 }
 
+// Тарифы за отправление по типу точки отгрузки (ПВЗ/ППЗ, СЦ)
+model DispatchTariff {
+  id                  String   @id @default(cuid())
+  marketplace         String   @default("ozon")
+  shipmentPointGroup  String   // ПВЗ/ППЗ, СЦ
+  dispatchFee         Float    // Тариф за отправление (руб)
+  isActive            Boolean  @default(true)
+  notes               String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([marketplace, shipmentPointGroup])
+  @@index([marketplace, shipmentPointGroup])
+  @@index([isActive])
+}
+
 // Таблица категорий и комиссий маркетплейса (вознаграждение маркетплейса)
 model CategoryCommission {
   id           String   @id @default(cuid())
