@@ -23,13 +23,10 @@ export async function GET(request: NextRequest) {
     const queryLower = query.toLowerCase().trim();
     const words = queryLower.split(/\s+/).filter((w) => w.length > 0);
 
-    // Строим SQL условия поиска: ищем по каждому слову отдельно
-    // Это позволит найти "легковые шины" даже если в БД записано "Шины для легковых автомобилей"
+    // Используем raw SQL для надежного case-insensitive поиска
+    // Ищем записи, где productType содержит хотя бы одно слово из запроса
     const searchPattern = `%${queryLower}%`;
-    const wordPatterns = words.map((word) => `%${word}%`);
-
-    // Поиск ТОЛЬКО по productType (столбец "Тип товара")
-    // Используем простой LIKE для основного запроса и дополнительную фильтрацию в JS
+    
     const results = await prisma.$queryRaw<Array<{
       productType: string | null;
       categoryName: string | null;
@@ -40,13 +37,14 @@ export async function GET(request: NextRequest) {
       WHERE "marketplace" = ${marketplace}
         AND "isActive" = true
         AND "productType" IS NOT NULL
-        AND "productType" != ''
+        AND TRIM("productType") != ''
         AND LOWER("productType") LIKE ${searchPattern}
       ORDER BY 
         CASE 
-          WHEN LOWER("productType") LIKE ${`${queryLower}%`} THEN 1
-          WHEN LOWER("productType") LIKE ${searchPattern} THEN 2
-          ELSE 3
+          WHEN LOWER("productType") = ${queryLower} THEN 1
+          WHEN LOWER("productType") LIKE ${`${queryLower}%`} THEN 2
+          WHEN LOWER("productType") LIKE ${searchPattern} THEN 3
+          ELSE 4
         END,
         "productType" ASC
       LIMIT ${limit * 3}
@@ -55,7 +53,7 @@ export async function GET(request: NextRequest) {
     // Дополнительная фильтрация: проверяем, что все слова запроса присутствуют в типе товара
     const filteredResults = results.filter((item) => {
       if (!item.productType) return false;
-      const typeLower = item.productType.toLowerCase();
+      const typeLower = item.productType.toLowerCase().trim();
       // Проверяем, что все слова запроса присутствуют в типе товара
       return words.every((word) => typeLower.includes(word));
     });
