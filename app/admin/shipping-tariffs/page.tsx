@@ -77,6 +77,7 @@ export default function ShippingTariffsUploadPage() {
   const [uploadPriceBand, setUploadPriceBand] = useState<"up_to_300" | "over_300">("up_to_300");
   const [isUploading, setIsUploading] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
+  const [isClearingSegment, setIsClearingSegment] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [result, setResult] = useState<UploadResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -197,6 +198,49 @@ export default function ShippingTariffsUploadPage() {
     }
   };
 
+  const handleClearSelectedSegment = async () => {
+    const segLabel = uploadPriceBand === "up_to_300" ? "До 300 ₽" : "От 301 ₽";
+    const confirmed = window.confirm(
+      `Очистить тарифы только для: Ozon / ${uploadDeliveryMethod.toUpperCase()} / ${segLabel}?`
+    );
+    if (!confirmed) return;
+
+    setIsClearingSegment(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/shipping-tariffs/clear", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          marketplace: "ozon",
+          deliveryMethod: uploadDeliveryMethod,
+          priceBand: uploadPriceBand,
+        }),
+      });
+
+      const data = (await response.json()) as {
+        success?: boolean;
+        message?: string;
+        error?: string;
+      };
+
+      if (!response.ok || !data.success) {
+        setError(data.error || "Не удалось очистить выбранный сегмент.");
+      } else {
+        setResult({
+          success: true,
+          message: data.message || "Сегмент очищен.",
+        });
+        await loadTariffs(1);
+      }
+    } catch (err: any) {
+      setError(err.message || "Ошибка при очистке сегмента.");
+    } finally {
+      setIsClearingSegment(false);
+    }
+  };
+
   // Загрузка списка тарифов
   const loadTariffs = async (page = 1) => {
     setIsLoadingTariffs(true);
@@ -314,8 +358,16 @@ export default function ShippingTariffsUploadPage() {
                 </Button>
                 <Button
                   type="button"
+                  variant="outline"
+                  disabled={isUploading || isClearing || isClearingSegment}
+                  onClick={handleClearSelectedSegment}
+                >
+                  {isClearingSegment ? "Очистка сегмента..." : "Очистить этот сегмент"}
+                </Button>
+                <Button
+                  type="button"
                   variant="destructive"
-                  disabled={isUploading || isClearing}
+                  disabled={isUploading || isClearing || isClearingSegment}
                   onClick={handleClearTariffs}
                 >
                   {isClearing ? "Очистка..." : "Очистить базу тарифов"}
