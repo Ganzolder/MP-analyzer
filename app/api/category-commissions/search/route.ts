@@ -20,9 +20,9 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const searchTerm = query.toLowerCase();
+    const searchTerm = `%${query.toLowerCase()}%`;
 
-    // Поиск по categoryName и productType (используем ILIKE через raw query для case-insensitive поиска)
+    // Поиск по categoryName и productType (используем raw query для case-insensitive поиска)
     const results = await prisma.$queryRaw<Array<{
       categoryName: string | null;
       productType: string | null;
@@ -34,8 +34,8 @@ export async function GET(request: NextRequest) {
       WHERE "marketplace" = ${marketplace}
         AND "isActive" = true
         AND (
-          LOWER("categoryName") LIKE ${`%${searchTerm}%`}
-          OR LOWER("productType") LIKE ${`%${searchTerm}%`}
+          LOWER("categoryName") LIKE ${searchTerm}
+          OR LOWER("productType") LIKE ${searchTerm}
         )
       ORDER BY "categoryName" ASC, "productType" ASC
       LIMIT ${limit}
