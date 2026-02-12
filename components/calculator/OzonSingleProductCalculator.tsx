@@ -13,16 +13,14 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 interface CategoryOption {
   value: string;
   label: string;
+  type: "category" | "productType";
 }
 
-// Моковые категории для демонстрации (позже будут загружаться из БД)
-const MOCK_CATEGORIES: CategoryOption[] = [
-  { value: "tires", label: "Шины для легковых автомобилей" },
-  { value: "electronics", label: "Электроника" },
-  { value: "clothing", label: "Одежда" },
-  { value: "home", label: "Товары для дома" },
-  { value: "sports", label: "Спорт и отдых" },
-];
+interface SearchResult {
+  value: string;
+  label: string;
+  type: "category" | "productType";
+}
 
 export function OzonSingleProductCalculator() {
   // Параметры товара
@@ -49,19 +47,61 @@ export function OzonSingleProductCalculator() {
   const [productCost, setProductCost] = useState<string>("");
   const [otherExpenses, setOtherExpenses] = useState<string>("");
 
-  // Автоподбор категории по названию (моковая логика)
+  // Поиск категорий
+  const [categoryOptions, setCategoryOptions] = useState<CategoryOption[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Поиск категорий и типов товаров по названию
   useEffect(() => {
-    if (productName && !category) {
-      // Простая логика: ищем ключевые слова в названии
-      const nameLower = productName.toLowerCase();
-      const found = MOCK_CATEGORIES.find((cat) => {
-        const keywords = cat.label.toLowerCase().split(" ");
-        return keywords.some((kw) => nameLower.includes(kw));
-      });
-      if (found) {
-        setCategory(found.value);
+    const searchCategories = async () => {
+      if (!productName || productName.trim().length < 2) {
+        setCategoryOptions([]);
+        return;
       }
-    }
+
+      setIsSearching(true);
+      try {
+        const response = await fetch(
+          `/api/category-commissions/search?q=${encodeURIComponent(productName)}&marketplace=ozon&limit=10`
+        );
+        const data = await response.json();
+
+        if (data.success && data.data) {
+          const options: CategoryOption[] = data.data.map((item: SearchResult) => ({
+            value: item.value,
+            label: item.label,
+            type: item.type,
+          }));
+          setCategoryOptions(options);
+
+          // Автоматически выбираем первую найденную категорию, если категория ещё не выбрана
+          if (!category && options.length > 0) {
+            // Приоритет: сначала категории, потом типы товаров
+            const categoryOption = options.find((opt) => opt.type === "category");
+            if (categoryOption) {
+              setCategory(categoryOption.value);
+            } else if (options[0]) {
+              setCategory(options[0].value);
+            }
+          }
+        } else {
+          setCategoryOptions([]);
+        }
+      } catch (error) {
+        console.error("Ошибка при поиске категорий:", error);
+        setCategoryOptions([]);
+      } finally {
+        setIsSearching(false);
+      }
+    };
+
+    // Debounce поиска
+    const timeoutId = setTimeout(() => {
+      searchCategories();
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
   }, [productName, category]);
 
   // Автоматический расчёт объёма из габаритов
@@ -123,30 +163,83 @@ export function OzonSingleProductCalculator() {
           {/* Категория */}
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <Label htmlFor="category">Категория</Label>
+              <Label htmlFor="category">Категория / Тип товара</Label>
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Info className="h-4 w-4 text-muted-foreground cursor-help" />
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p>Категория подбирается автоматически по названию. Вы можете изменить её вручную.</p>
+                    <p>
+                      Категория и тип товара подбираются автоматически по названию из базы данных комиссий.
+                      Вы можете изменить выбор вручную.
+                    </p>
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
             </div>
-            <Select value={category} onValueChange={setCategory}>
+            <Select
+              value={category}
+              onValueChange={setCategory}
+              disabled={isSearching || (!productName || productName.trim().length < 2)}
+            >
               <SelectTrigger id="category">
-                <SelectValue placeholder="Выберите категорию" />
+                <SelectValue
+                  placeholder={
+                    isSearching
+                      ? "Поиск..."
+                      : !productName || productName.trim().length < 2
+                        ? "Введите название товара (минимум 2 символа)"
+                        : categoryOptions.length === 0
+                          ? "Категория не найдена"
+                          : "Выберите категорию или тип товара"
+                  }
+                />
               </SelectTrigger>
               <SelectContent>
-                {MOCK_CATEGORIES.map((cat) => (
-                  <SelectItem key={cat.value} value={cat.value}>
-                    {cat.label}
-                  </SelectItem>
-                ))}
+                {categoryOptions.length > 0 ? (
+                  <>
+                    {categoryOptions.filter((opt) => opt.type === "category").length > 0 && (
+                      <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                        Категории
+                      </div>
+                    )}
+                    {categoryOptions
+                      .filter((opt) => opt.type === "category")
+                      .map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    {categoryOptions.filter((opt) => opt.type === "productType").length > 0 && (
+                      <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground mt-2">
+                        Типы товаров
+                      </div>
+                    )}
+                    {categoryOptions
+                      .filter((opt) => opt.type === "productType")
+                      .map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                  </>
+                ) : (
+                  <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                    {isSearching
+                      ? "Поиск..."
+                      : !productName || productName.trim().length < 2
+                        ? "Введите название товара для поиска"
+                        : "Ничего не найдено"}
+                  </div>
+                )}
               </SelectContent>
             </Select>
+            {category && (
+              <p className="text-xs text-muted-foreground">
+                Выбрано: {categoryOptions.find((opt) => opt.value === category)?.label || category}
+              </p>
+            )}
           </div>
 
           {/* Цена и вес */}
