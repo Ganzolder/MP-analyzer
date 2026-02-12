@@ -11,9 +11,11 @@ import { useCalculatorStore } from "@/lib/store/calculator-store";
 import { parseOzonFile } from "@/lib/calculator/parsers/ozon-file-parser";
 import { useToast } from "@/components/ui/use-toast";
 import { OzonProductsTable } from "./OzonProductsTable";
+import { OzonSingleProductCalculator } from "./OzonSingleProductCalculator";
 import type { ParsedFileResult } from "@/lib/types/calculator";
 
 export function OzonCalculator() {
+  const [calculatorMode, setCalculatorMode] = useState<"single" | "batch">("single");
   const { toast } = useToast();
   const {
     ozon,
@@ -142,7 +144,39 @@ export function OzonCalculator() {
 
   return (
     <div className="space-y-6">
-      {/* Загрузка файла */}
+      {/* Выбор режима калькулятора */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Режим калькулятора</CardTitle>
+          <CardDescription>Выберите режим работы калькулятора</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant={calculatorMode === "single" ? "default" : "outline"}
+              onClick={() => setCalculatorMode("single")}
+              className="flex-1"
+            >
+              Один товар
+            </Button>
+            <Button
+              type="button"
+              variant={calculatorMode === "batch" ? "default" : "outline"}
+              onClick={() => setCalculatorMode("batch")}
+              className="flex-1"
+            >
+              Партия товаров (из файла)
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {calculatorMode === "single" ? (
+        <OzonSingleProductCalculator />
+      ) : (
+        <>
+          {/* Загрузка файла */}
       <Card>
         <CardHeader>
           <CardTitle>Загрузка файла</CardTitle>
@@ -311,6 +345,8 @@ export function OzonCalculator() {
             )}
           </CardContent>
         </Card>
+      )}
+        </>
       )}
     </div>
   );
