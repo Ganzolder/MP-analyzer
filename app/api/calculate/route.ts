@@ -134,6 +134,10 @@ export async function POST(request: NextRequest) {
       }
 
       // Для товаров от 301₽ — новая логика
+      // Округляем объём в большую сторону до литра перед расчётом
+      const roundedVolumeLiters = Math.ceil(volumeLiters);
+      const roundedVolumeCm3 = roundedVolumeLiters * 1000;
+      
       // Ищем тарифы для разных диапазонов объёма
       const findTariffForVolume = async (targetVolumeCm3: number) => {
         // Ищем тариф, который покрывает конкретный объём
@@ -155,51 +159,51 @@ export async function POST(request: NextRequest) {
       };
 
       // Тарифы для разных диапазонов
-      // Ищем тарифы, которые покрывают объёмы в соответствующих диапазонах
-      const tariffUpTo1L = await findTariffForVolume(volumeLiters <= 1 ? volumeCm3 : 500); // до 1л
-      const tariff1To2L = await findTariffForVolume(volumeLiters > 1 && volumeLiters <= 2 ? volumeCm3 : 1500); // 1-2л
-      const tariff2To3L = await findTariffForVolume(volumeLiters > 2 && volumeLiters <= 3 ? volumeCm3 : 2500); // 2-3л (фикс для расчётов)
-      // Для диапазонов 3-190л и 190-1000л используем объём товара, если он попадает в диапазон, иначе примерный объём
-      const tariff3To190L = await findTariffForVolume(volumeLiters > 3 && volumeLiters <= 190 ? volumeCm3 : 50000); // 3-190л (тариф за литр)
-      const tariff190To1000L = await findTariffForVolume(volumeLiters > 190 && volumeLiters <= 1000 ? volumeCm3 : 500000); // 190-1000л (тариф за литр)
-      const tariffOver1000L = await findTariffForVolume(volumeLiters > 1000 ? volumeCm3 : 1500000); // от 1000л
+      // Ищем тарифы, которые покрывают объёмы в соответствующих диапазонах (используем округлённый объём)
+      const tariffUpTo1L = await findTariffForVolume(roundedVolumeLiters <= 1 ? roundedVolumeCm3 : 500); // до 1л
+      const tariff1To2L = await findTariffForVolume(roundedVolumeLiters > 1 && roundedVolumeLiters <= 2 ? roundedVolumeCm3 : 1500); // 1-2л
+      const tariff2To3L = await findTariffForVolume(roundedVolumeLiters > 2 && roundedVolumeLiters <= 3 ? roundedVolumeCm3 : 2500); // 2-3л (фикс для расчётов)
+      // Для диапазонов 3-190л и 190-1000л используем округлённый объём товара, если он попадает в диапазон, иначе примерный объём
+      const tariff3To190L = await findTariffForVolume(roundedVolumeLiters > 3 && roundedVolumeLiters <= 190 ? roundedVolumeCm3 : 50000); // 3-190л (тариф за литр)
+      const tariff190To1000L = await findTariffForVolume(roundedVolumeLiters > 190 && roundedVolumeLiters <= 1000 ? roundedVolumeCm3 : 500000); // 190-1000л (тариф за литр)
+      const tariffOver1000L = await findTariffForVolume(roundedVolumeLiters > 1000 ? roundedVolumeCm3 : 1500000); // от 1000л
 
       let cost = 0;
       let details: string[] = [];
 
-      if (volumeLiters <= 1) {
+      if (roundedVolumeLiters <= 1) {
         // до 1л - фикс по таблице
         if (!tariffUpTo1L) {
           return { cost: 0, tariffDetails: "Тариф не найден (до 1л)" };
         }
         cost = tariffUpTo1L.basePrice;
-        details.push(`Фикс. ${cost} ₽ (до 1л)`);
-      } else if (volumeLiters <= 2) {
+        details.push(`Фикс. ${cost} ₽ (до 1л, объём округлён: ${volumeLiters.toFixed(3)} → ${roundedVolumeLiters} л)`);
+      } else if (roundedVolumeLiters <= 2) {
         // от 1 до 2л - фикс по таблице
         if (!tariff1To2L) {
           return { cost: 0, tariffDetails: "Тариф не найден (1-2л)" };
         }
         cost = tariff1To2L.basePrice;
-        details.push(`Фикс. ${cost} ₽ (1-2л)`);
-      } else if (volumeLiters <= 3) {
+        details.push(`Фикс. ${cost} ₽ (1-2л, объём округлён: ${volumeLiters.toFixed(3)} → ${roundedVolumeLiters} л)`);
+      } else if (roundedVolumeLiters <= 3) {
         // от 2 до 3л - фикс по таблице
         if (!tariff2To3L) {
           return { cost: 0, tariffDetails: "Тариф не найден (2-3л)" };
         }
         cost = tariff2To3L.basePrice;
-        details.push(`Фикс. ${cost} ₽ (2-3л)`);
-      } else if (volumeLiters <= 190) {
+        details.push(`Фикс. ${cost} ₽ (2-3л, объём округлён: ${volumeLiters.toFixed(3)} → ${roundedVolumeLiters} л)`);
+      } else if (roundedVolumeLiters <= 190) {
         // от 3 до 190л - фикс по тарифу от 2 до 3л плюс объем свыше 3л умноженный на тариф по таблице
         if (!tariff2To3L || !tariff3To190L) {
           return { cost: 0, tariffDetails: "Тариф не найден (3-190л)" };
         }
         const fixedCost = tariff2To3L.basePrice;
-        const volumeOver3L = volumeLiters - 3;
+        const volumeOver3L = roundedVolumeLiters - 3; // Используем округлённый объём
         const volumeCost = volumeOver3L * tariff3To190L.basePrice;
         cost = fixedCost + volumeCost;
         details.push(`Фикс. ${fixedCost} ₽ (2-3л)`);
-        details.push(`+ ${volumeOver3L.toFixed(3)} л × ${tariff3To190L.basePrice} ₽/л = ${volumeCost.toFixed(2)} ₽`);
-      } else if (volumeLiters <= 1000) {
+        details.push(`+ ${volumeOver3L} л × ${tariff3To190L.basePrice} ₽/л = ${volumeCost.toFixed(2)} ₽ (объём округлён: ${volumeLiters.toFixed(3)} → ${roundedVolumeLiters} л)`);
+      } else if (roundedVolumeLiters <= 1000) {
         // от 190 до 1000л - фикс по тарифу от 2 до 3л плюс объем свыше 3л умноженный на тариф по таблице но до 190л и далее плюс весь объем свыше 190л умноженный на тариф по таблице
         if (!tariff2To3L || !tariff3To190L || !tariff190To1000L) {
           return { cost: 0, tariffDetails: "Тариф не найден (190-1000л)" };
@@ -207,12 +211,12 @@ export async function POST(request: NextRequest) {
         const fixedCost = tariff2To3L.basePrice;
         const volume3To190L = 190 - 3; // 187л
         const volumeCost3To190 = volume3To190L * tariff3To190L.basePrice;
-        const volumeOver190L = volumeLiters - 190;
+        const volumeOver190L = roundedVolumeLiters - 190; // Используем округлённый объём
         const volumeCostOver190 = volumeOver190L * tariff190To1000L.basePrice;
         cost = fixedCost + volumeCost3To190 + volumeCostOver190;
         details.push(`Фикс. ${fixedCost} ₽ (2-3л)`);
         details.push(`+ ${volume3To190L} л × ${tariff3To190L.basePrice} ₽/л = ${volumeCost3To190.toFixed(2)} ₽ (3-190л)`);
-        details.push(`+ ${volumeOver190L.toFixed(3)} л × ${tariff190To1000L.basePrice} ₽/л = ${volumeCostOver190.toFixed(2)} ₽ (свыше 190л)`);
+        details.push(`+ ${volumeOver190L} л × ${tariff190To1000L.basePrice} ₽/л = ${volumeCostOver190.toFixed(2)} ₽ (свыше 190л, объём округлён: ${volumeLiters.toFixed(3)} → ${roundedVolumeLiters} л)`);
       } else {
         // от 1000л - фикс по таблице
         if (!tariffOver1000L) {
