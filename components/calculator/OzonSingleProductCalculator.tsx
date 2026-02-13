@@ -7,8 +7,42 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Info } from "lucide-react";
+import { Info, Calculator, TrendingUp, TrendingDown } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+
+interface FulfillmentResult {
+  commissionPct: number;
+  commissionAmount: number;
+  shippingCost: number;
+  shippingDetails: string;
+  processingFee: number;
+  processingDetails: string;
+  acquiringFee: number;
+  totalFees: number;
+  profit: number;
+  margin: number;
+}
+
+interface CalcResult {
+  price: number;
+  volumeLiters: number;
+  volumeCm3: number;
+  priceBand: string;
+  productCost: number;
+  otherExpenses: number;
+  totalCost: number;
+  acquiringPct: number;
+  acquiringFee: number;
+  commission: {
+    categoryName: string | null;
+    productType: string | null;
+  };
+  fbo: FulfillmentResult;
+  fbs: FulfillmentResult;
+  rfbs: FulfillmentResult;
+}
 
 interface CategoryOption {
   value: string;
@@ -96,6 +130,11 @@ export function OzonSingleProductCalculator() {
   // Тарифы обработки и отправления
   const [processingTariffs, setProcessingTariffs] = useState<ProcessingTariff[]>([]);
   const [dispatchTariffs, setDispatchTariffs] = useState<DispatchTariff[]>([]);
+
+  // Результаты расчёта
+  const [calcResult, setCalcResult] = useState<CalcResult | null>(null);
+  const [isCalculating, setIsCalculating] = useState(false);
+  const [calcError, setCalcError] = useState<string | null>(null);
 
   // Поиск категорий и типов товаров по названию
   useEffect(() => {
@@ -280,6 +319,82 @@ export function OzonSingleProductCalculator() {
   const handleProductCostChange = (value: string) => {
     const cleaned = value.replace(/\s/g, "");
     setProductCost(cleaned);
+  };
+
+  // Расчёт объёма в литрах
+  const getVolumeLiters = (): number => {
+    if (dimensionMode === "volume" && volume) {
+      return parseFloat(volume.replace(",", ".")) || 0;
+    }
+    if (calculatedVolume !== null) {
+      return calculatedVolume;
+    }
+    return 0;
+  };
+
+  // Основная функция расчёта
+  const handleCalculate = async () => {
+    const priceNum = parseFloat(price.replace(/\s/g, ""));
+    if (!priceNum || priceNum <= 0) {
+      setCalcError("Укажите цену товара");
+      return;
+    }
+
+    const vol = getVolumeLiters();
+    if (vol <= 0) {
+      setCalcError("Укажите объём или габариты товара");
+      return;
+    }
+
+    // Определяем тип и значение категории из selected value
+    let catType = "";
+    let catValue = "";
+    if (category) {
+      const colonIdx = category.indexOf(":");
+      if (colonIdx !== -1) {
+        catType = category.substring(0, colonIdx);
+        catValue = category.substring(colonIdx + 1);
+      }
+    }
+
+    setIsCalculating(true);
+    setCalcError(null);
+    setCalcResult(null);
+
+    try {
+      const response = await fetch("/api/calculate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          marketplace: "ozon",
+          categoryType: catType || undefined,
+          categoryValue: catValue || undefined,
+          price: priceNum,
+          volumeLiters: vol,
+          pickupPointType: pickupPointType || undefined,
+          acceptanceType: acceptanceType || undefined,
+          productCost: parseFloat(productCost) || 0,
+          otherExpenses: parseFloat(otherExpenses) || 0,
+        }),
+      });
+
+      const data = await response.json();
+      if (data.success && data.data) {
+        setCalcResult(data.data);
+      } else {
+        setCalcError(data.error || "Ошибка расчёта");
+      }
+    } catch (error) {
+      console.error("Ошибка расчёта:", error);
+      setCalcError("Ошибка при обращении к серверу");
+    } finally {
+      setIsCalculating(false);
+    }
+  };
+
+  // Форматирование денег
+  const fmtMoney = (v: number): string => {
+    return v.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " ₽";
   };
 
   return (
@@ -859,6 +974,227 @@ export function OzonSingleProductCalculator() {
           </Tabs>
         </CardContent>
       </Card>
+
+      {/* Кнопка расчёта */}
+      <div className="flex justify-center">
+        <Button
+          size="lg"
+          onClick={handleCalculate}
+          disabled={isCalculating || !price || !category}
+          className="w-full md:w-auto px-12 py-6 text-lg"
+        >
+          {isCalculating ? (
+            <>Считаю...</>
+          ) : (
+            <>
+              <Calculator className="h-5 w-5 mr-2" />
+              Рассчитать
+            </>
+          )}
+        </Button>
+      </div>
+
+      {/* Ошибка расчёта */}
+      {calcError && (
+        <Alert variant="destructive">
+          <AlertDescription>{calcError}</AlertDescription>
+        </Alert>
+      )}
+
+      {/* Результаты расчёта */}
+      {calcResult && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              Результаты расчёта
+              <Badge variant="outline" className="font-normal">
+                {calcResult.commission.productType || calcResult.commission.categoryName || "—"}
+              </Badge>
+            </CardTitle>
+            <CardDescription>
+              Цена: {fmtMoney(calcResult.price)} · Объём: {calcResult.volumeLiters.toFixed(3)} л · Сегмент: {calcResult.priceBand === "up_to_300" ? "до 300 ₽" : "от 301 ₽"}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="border-b-2">
+                    <th className="text-left py-3 px-3 font-medium text-muted-foreground">Показатель</th>
+                    <th className="text-right py-3 px-3 font-bold text-blue-600 min-w-[120px]">FBO</th>
+                    <th className="text-right py-3 px-3 font-bold text-green-600 min-w-[120px]">FBS</th>
+                    <th className="text-right py-3 px-3 font-bold text-orange-600 min-w-[120px]">RFBS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Цена продажи */}
+                  <tr className="border-b bg-muted/20">
+                    <td className="py-2.5 px-3 font-medium">Цена продажи</td>
+                    <td className="text-right py-2.5 px-3">{fmtMoney(calcResult.price)}</td>
+                    <td className="text-right py-2.5 px-3">{fmtMoney(calcResult.price)}</td>
+                    <td className="text-right py-2.5 px-3">{fmtMoney(calcResult.price)}</td>
+                  </tr>
+
+                  {/* Комиссия */}
+                  <tr className="border-b">
+                    <td className="py-2.5 px-3">
+                      Комиссия МП
+                      <span className="text-xs text-muted-foreground ml-1">
+                        ({calcResult.fbo.commissionPct}% / {calcResult.fbs.commissionPct}% / {calcResult.rfbs.commissionPct}%)
+                      </span>
+                    </td>
+                    <td className="text-right py-2.5 px-3 text-red-500">−{fmtMoney(calcResult.fbo.commissionAmount)}</td>
+                    <td className="text-right py-2.5 px-3 text-red-500">−{fmtMoney(calcResult.fbs.commissionAmount)}</td>
+                    <td className="text-right py-2.5 px-3 text-red-500">−{fmtMoney(calcResult.rfbs.commissionAmount)}</td>
+                  </tr>
+
+                  {/* Логистика */}
+                  <tr className="border-b">
+                    <td className="py-2.5 px-3">
+                      Логистика
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Info className="h-3.5 w-3.5 text-muted-foreground inline ml-1 cursor-help" />
+                          </TooltipTrigger>
+                          <TooltipContent side="right" className="max-w-xs">
+                            <p className="text-xs"><strong>FBO:</strong> {calcResult.fbo.shippingDetails}</p>
+                            <p className="text-xs mt-1"><strong>FBS:</strong> {calcResult.fbs.shippingDetails}</p>
+                            <p className="text-xs mt-1"><strong>RFBS:</strong> {calcResult.rfbs.shippingDetails}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </td>
+                    <td className="text-right py-2.5 px-3 text-red-500">
+                      {calcResult.fbo.shippingCost > 0 ? `−${fmtMoney(calcResult.fbo.shippingCost)}` : "—"}
+                    </td>
+                    <td className="text-right py-2.5 px-3 text-red-500">
+                      {calcResult.fbs.shippingCost > 0 ? `−${fmtMoney(calcResult.fbs.shippingCost)}` : "—"}
+                    </td>
+                    <td className="text-right py-2.5 px-3 text-muted-foreground">
+                      своя
+                    </td>
+                  </tr>
+
+                  {/* Обработка FBS */}
+                  <tr className="border-b">
+                    <td className="py-2.5 px-3">
+                      Обработка + отправление
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Info className="h-3.5 w-3.5 text-muted-foreground inline ml-1 cursor-help" />
+                          </TooltipTrigger>
+                          <TooltipContent side="right" className="max-w-xs">
+                            <p className="text-xs"><strong>FBS:</strong> {calcResult.fbs.processingDetails}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </td>
+                    <td className="text-right py-2.5 px-3 text-muted-foreground">вкл.</td>
+                    <td className="text-right py-2.5 px-3 text-red-500">
+                      {calcResult.fbs.processingFee > 0 ? `−${fmtMoney(calcResult.fbs.processingFee)}` : "—"}
+                    </td>
+                    <td className="text-right py-2.5 px-3 text-muted-foreground">—</td>
+                  </tr>
+
+                  {/* Эквайринг */}
+                  <tr className="border-b">
+                    <td className="py-2.5 px-3">
+                      Эквайринг
+                      <span className="text-xs text-muted-foreground ml-1">({calcResult.acquiringPct}%)</span>
+                    </td>
+                    <td className="text-right py-2.5 px-3 text-red-500">−{fmtMoney(calcResult.acquiringFee)}</td>
+                    <td className="text-right py-2.5 px-3 text-red-500">−{fmtMoney(calcResult.acquiringFee)}</td>
+                    <td className="text-right py-2.5 px-3 text-red-500">−{fmtMoney(calcResult.acquiringFee)}</td>
+                  </tr>
+
+                  {/* Себестоимость */}
+                  {calcResult.totalCost > 0 && (
+                    <tr className="border-b bg-muted/10">
+                      <td className="py-2.5 px-3">
+                        Себестоимость + расходы
+                      </td>
+                      <td className="text-right py-2.5 px-3 text-red-500">−{fmtMoney(calcResult.totalCost)}</td>
+                      <td className="text-right py-2.5 px-3 text-red-500">−{fmtMoney(calcResult.totalCost)}</td>
+                      <td className="text-right py-2.5 px-3 text-red-500">−{fmtMoney(calcResult.totalCost)}</td>
+                    </tr>
+                  )}
+
+                  {/* Разделитель */}
+                  <tr className="border-b-2 border-t-2">
+                    <td className="py-2.5 px-3 font-bold">Итого удержания</td>
+                    <td className="text-right py-2.5 px-3 font-bold text-red-600">−{fmtMoney(calcResult.fbo.totalFees + calcResult.totalCost)}</td>
+                    <td className="text-right py-2.5 px-3 font-bold text-red-600">−{fmtMoney(calcResult.fbs.totalFees + calcResult.totalCost)}</td>
+                    <td className="text-right py-2.5 px-3 font-bold text-red-600">−{fmtMoney(calcResult.rfbs.totalFees + calcResult.totalCost)}</td>
+                  </tr>
+
+                  {/* Прибыль */}
+                  <tr className="bg-muted/30">
+                    <td className="py-3 px-3 font-bold text-base">Прибыль</td>
+                    <td className={`text-right py-3 px-3 font-bold text-base ${calcResult.fbo.profit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                      {calcResult.fbo.profit >= 0 ? "+" : ""}{fmtMoney(calcResult.fbo.profit)}
+                    </td>
+                    <td className={`text-right py-3 px-3 font-bold text-base ${calcResult.fbs.profit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                      {calcResult.fbs.profit >= 0 ? "+" : ""}{fmtMoney(calcResult.fbs.profit)}
+                    </td>
+                    <td className={`text-right py-3 px-3 font-bold text-base ${calcResult.rfbs.profit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                      {calcResult.rfbs.profit >= 0 ? "+" : ""}{fmtMoney(calcResult.rfbs.profit)}
+                    </td>
+                  </tr>
+
+                  {/* Маржинальность */}
+                  <tr>
+                    <td className="py-3 px-3 font-medium">Маржинальность</td>
+                    <td className="text-right py-3 px-3">
+                      <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
+                        calcResult.fbo.margin >= 20
+                          ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400"
+                          : calcResult.fbo.margin >= 0
+                            ? "bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400"
+                            : "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400"
+                      }`}>
+                        {calcResult.fbo.margin >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+                        {calcResult.fbo.margin}%
+                      </div>
+                    </td>
+                    <td className="text-right py-3 px-3">
+                      <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
+                        calcResult.fbs.margin >= 20
+                          ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400"
+                          : calcResult.fbs.margin >= 0
+                            ? "bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400"
+                            : "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400"
+                      }`}>
+                        {calcResult.fbs.margin >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+                        {calcResult.fbs.margin}%
+                      </div>
+                    </td>
+                    <td className="text-right py-3 px-3">
+                      <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
+                        calcResult.rfbs.margin >= 20
+                          ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400"
+                          : calcResult.rfbs.margin >= 0
+                            ? "bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400"
+                            : "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400"
+                      }`}>
+                        {calcResult.rfbs.margin >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+                        {calcResult.rfbs.margin}%
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {/* Подсказка */}
+            <p className="text-xs text-muted-foreground mt-4">
+              * Для RFBS стоимость логистики не учитывается — доставку организует продавец самостоятельно.
+              Указанная прибыль RFBS не включает расходы на доставку покупателю.
+            </p>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
