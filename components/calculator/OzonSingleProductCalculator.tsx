@@ -22,6 +22,32 @@ interface SearchResult {
   type: "category" | "productType";
 }
 
+interface CommissionRates {
+  categoryName: string | null;
+  productType: string | null;
+  categoryPath: string | null;
+  rates: {
+    fbo: {
+      upTo100: number | null;
+      from100to300: number | null;
+      from300to500: number | null;
+      from500to1500: number | null;
+      over1500: number | null;
+    };
+    fboFresh: {
+      upTo100: number | null;
+      from100to300: number | null;
+      over300: number | null;
+    };
+    fbs: {
+      upTo100: number | null;
+      from100to300: number | null;
+      over300: number | null;
+    };
+    rfbs: number | null;
+  };
+}
+
 export function OzonSingleProductCalculator() {
   // Параметры товара
   const [productName, setProductName] = useState("");
@@ -51,6 +77,10 @@ export function OzonSingleProductCalculator() {
   const [categoryOptions, setCategoryOptions] = useState<CategoryOption[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Комиссии
+  const [commissionRates, setCommissionRates] = useState<CommissionRates | null>(null);
+  const [isLoadingRates, setIsLoadingRates] = useState(false);
 
   // Поиск категорий и типов товаров по названию
   useEffect(() => {
@@ -97,6 +127,79 @@ export function OzonSingleProductCalculator() {
 
     return () => clearTimeout(timeoutId);
   }, [productName, category]);
+
+  // Загрузка ставок комиссии при выборе категории
+  useEffect(() => {
+    const fetchRates = async () => {
+      if (!category) {
+        setCommissionRates(null);
+        return;
+      }
+
+      // Парсим value формата "productType:Шины" или "category:Автотовары"
+      const colonIdx = category.indexOf(":");
+      if (colonIdx === -1) return;
+
+      const type = category.substring(0, colonIdx);
+      const value = category.substring(colonIdx + 1);
+
+      setIsLoadingRates(true);
+      try {
+        const response = await fetch(
+          `/api/category-commissions/rates?type=${encodeURIComponent(type)}&value=${encodeURIComponent(value)}&marketplace=ozon`
+        );
+        const data = await response.json();
+        if (data.success && data.data) {
+          setCommissionRates(data.data);
+        } else {
+          setCommissionRates(null);
+        }
+      } catch (error) {
+        console.error("Ошибка при загрузке комиссий:", error);
+        setCommissionRates(null);
+      } finally {
+        setIsLoadingRates(false);
+      }
+    };
+
+    fetchRates();
+  }, [category]);
+
+  // Определение активной комиссии на основе цены
+  const getActiveCommission = (): { fbo: number | null; fbs: number | null; rfbs: number | null } => {
+    if (!commissionRates) return { fbo: null, fbs: null, rfbs: null };
+
+    const priceNum = parseFloat(price.replace(/\s/g, ""));
+    const rates = commissionRates.rates;
+
+    let fbo: number | null = null;
+    let fbs: number | null = null;
+
+    if (isNaN(priceNum) || priceNum <= 0) {
+      // Нет цены — показываем первый ценовой диапазон
+      fbo = rates.fbo.upTo100;
+      fbs = rates.fbs.upTo100;
+    } else if (priceNum <= 100) {
+      fbo = rates.fbo.upTo100;
+      fbs = rates.fbs.upTo100;
+    } else if (priceNum <= 300) {
+      fbo = rates.fbo.from100to300;
+      fbs = rates.fbs.from100to300;
+    } else if (priceNum <= 500) {
+      fbo = rates.fbo.from300to500;
+      fbs = rates.fbs.over300;
+    } else if (priceNum <= 1500) {
+      fbo = rates.fbo.from500to1500;
+      fbs = rates.fbs.over300;
+    } else {
+      fbo = rates.fbo.over1500;
+      fbs = rates.fbs.over300;
+    }
+
+    return { fbo, fbs, rfbs: rates.rfbs };
+  };
+
+  const activeCommission = getActiveCommission();
 
   // Автоматический расчёт объёма из габаритов
   useEffect(() => {
@@ -235,6 +338,110 @@ export function OzonSingleProductCalculator() {
               </p>
             )}
           </div>
+
+          {/* Блок комиссий */}
+          {isLoadingRates && (
+            <div className="text-sm text-muted-foreground animate-pulse">
+              Загрузка комиссий...
+            </div>
+          )}
+          {commissionRates && !isLoadingRates && (
+            <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-semibold">Комиссии Ozon</h4>
+                {commissionRates.categoryPath && (
+                  <span className="text-xs text-muted-foreground">
+                    {commissionRates.categoryPath}
+                  </span>
+                )}
+              </div>
+
+              {/* Активная комиссия по текущей цене */}
+              {price && parseFloat(price.replace(/\s/g, "")) > 0 && (
+                <div className="flex gap-3 flex-wrap">
+                  {activeCommission.fbo !== null && (
+                    <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 px-3 py-1.5 rounded-md text-sm font-medium">
+                      <span>FBO:</span>
+                      <span className="font-bold">{activeCommission.fbo}%</span>
+                    </div>
+                  )}
+                  {activeCommission.fbs !== null && (
+                    <div className="flex items-center gap-1.5 bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-300 px-3 py-1.5 rounded-md text-sm font-medium">
+                      <span>FBS:</span>
+                      <span className="font-bold">{activeCommission.fbs}%</span>
+                    </div>
+                  )}
+                  {activeCommission.rfbs !== null && (
+                    <div className="flex items-center gap-1.5 bg-orange-50 dark:bg-orange-950/30 text-orange-700 dark:text-orange-300 px-3 py-1.5 rounded-md text-sm font-medium">
+                      <span>RFBS:</span>
+                      <span className="font-bold">{activeCommission.rfbs}%</span>
+                    </div>
+                  )}
+                  <span className="text-xs text-muted-foreground self-center">
+                    при цене {formatNumber(price)} ₽
+                  </span>
+                </div>
+              )}
+
+              {/* Полная таблица комиссий */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Ценовой диапазон</th>
+                      <th className="text-center py-1.5 px-2 font-medium text-blue-600">FBO</th>
+                      <th className="text-center py-1.5 px-2 font-medium text-blue-400">FBO Fresh</th>
+                      <th className="text-center py-1.5 px-2 font-medium text-green-600">FBS</th>
+                      <th className="text-center py-1.5 px-2 font-medium text-orange-600">RFBS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                      { label: "до 100 ₽", fbo: commissionRates.rates.fbo.upTo100, fboFresh: commissionRates.rates.fboFresh.upTo100, fbs: commissionRates.rates.fbs.upTo100, rfbs: commissionRates.rates.rfbs, priceRange: [0, 100] },
+                      { label: "100–300 ₽", fbo: commissionRates.rates.fbo.from100to300, fboFresh: commissionRates.rates.fboFresh.from100to300, fbs: commissionRates.rates.fbs.from100to300, rfbs: null, priceRange: [100, 300] },
+                      { label: "300–500 ₽", fbo: commissionRates.rates.fbo.from300to500, fboFresh: commissionRates.rates.fboFresh.over300, fbs: commissionRates.rates.fbs.over300, rfbs: null, priceRange: [300, 500] },
+                      { label: "500–1500 ₽", fbo: commissionRates.rates.fbo.from500to1500, fboFresh: null, fbs: null, rfbs: null, priceRange: [500, 1500] },
+                      { label: "свыше 1500 ₽", fbo: commissionRates.rates.fbo.over1500, fboFresh: null, fbs: null, rfbs: null, priceRange: [1500, Infinity] },
+                    ].map((row, idx) => {
+                      const priceNum = parseFloat(price.replace(/\s/g, ""));
+                      const isActive = !isNaN(priceNum) && priceNum > 0 && priceNum > row.priceRange[0] && priceNum <= row.priceRange[1];
+                      // Исключение: для первого диапазона 0-100
+                      const isActiveFirst = idx === 0 && !isNaN(priceNum) && priceNum > 0 && priceNum <= 100;
+                      const highlighted = isActive || isActiveFirst;
+
+                      return (
+                        <tr
+                          key={idx}
+                          className={`border-b last:border-0 transition-colors ${
+                            highlighted
+                              ? "bg-yellow-50 dark:bg-yellow-950/20 font-semibold"
+                              : "hover:bg-muted/20"
+                          }`}
+                        >
+                          <td className="py-1.5 px-2">
+                            {row.label}
+                            {highlighted && <span className="ml-1 text-yellow-600">●</span>}
+                          </td>
+                          <td className="text-center py-1.5 px-2">
+                            {row.fbo !== null ? `${row.fbo}%` : "—"}
+                          </td>
+                          <td className="text-center py-1.5 px-2">
+                            {row.fboFresh !== null ? `${row.fboFresh}%` : "—"}
+                          </td>
+                          <td className="text-center py-1.5 px-2">
+                            {row.fbs !== null ? `${row.fbs}%` : "—"}
+                          </td>
+                          <td className="text-center py-1.5 px-2">
+                            {row.rfbs !== null ? `${row.rfbs}%` : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* Цена и вес */}
           <div className="grid grid-cols-2 gap-4">
