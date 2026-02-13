@@ -873,13 +873,10 @@ export function OzonSingleProductCalculator() {
 
               {/* Итого при выборе приёмки */}
               {acceptanceType && (() => {
-                const groupName = pickupPointType === "pvz-ppz" ? "ПВЗ/ППЗ" : "СЦ";
-                const dispatchTariff = dispatchTariffs.find(
-                  (t) => t.shipmentPointGroup === groupName
-                );
-                const dispatchFee = dispatchTariff?.dispatchFee || 0;
-
-                // Для расчёта берём среднее/первое подходящее значение обработки
+                // Тарифы обработки отправлений исключены из расчёта
+                // Используем только тарифы обработки из таблицы ProcessingTariff
+                
+                // Для расчёта берём первое подходящее значение обработки
                 const isPvz = pickupPointType === "pvz-ppz";
                 const relevantProcessing = processingTariffs.filter((t) => {
                   const pl = t.shipmentPointType.toLowerCase();
@@ -889,35 +886,40 @@ export function OzonSingleProductCalculator() {
                 // Выбираем первый подходящий тариф обработки
                 const firstProcessing = relevantProcessing.length > 0 ? relevantProcessing[0] : null;
 
-                // Тариф обработки зависит от типа приёмки:
-                // "employee" (сотрудник) → Ozon обработка
-                // "self" (самоприёмка) → партнёр обработка
-                // "trust" (доверительная) → партнёр обработка
-                const processingFee = firstProcessing
-                  ? acceptanceType === "employee"
-                    ? firstProcessing.ozonProcessingFee
-                    : firstProcessing.partnerProcessingFee
-                  : 0;
+                // Тариф обработки по новой логике:
+                // ПВЗ/ППЗ - берём ozonProcessingFee (независимо от типа приёмки)
+                // СЦ + сотрудник - берём ozonProcessingFee
+                // СЦ + самоприёмка/доверительная - берём ozonProcessingFee / 2
+                let processingFee = 0;
+                if (firstProcessing) {
+                  if (isPvz) {
+                    // ПВЗ/ППЗ - берём тариф из таблицы (независимо от типа приёмки)
+                    processingFee = firstProcessing.ozonProcessingFee;
+                  } else {
+                    // СЦ - зависит от типа приёмки
+                    if (acceptanceType === "employee") {
+                      // СЦ + сотрудник - берём тариф из таблицы
+                      processingFee = firstProcessing.ozonProcessingFee;
+                    } else if (acceptanceType === "self" || acceptanceType === "trust") {
+                      // СЦ + самоприёмка или доверительная - берём тариф из таблицы и делим на 2
+                      processingFee = firstProcessing.ozonProcessingFee / 2;
+                    }
+                  }
+                }
 
-                const totalFbsFee = dispatchFee + processingFee;
+                const totalFbsFee = processingFee;
 
                 return (
                   <div className="border-t pt-3 mt-2 space-y-2">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">
-                        Отправление ({groupName})
+                        Обработка ({acceptanceType === "employee" ? "сотрудник Ozon" : acceptanceType === "self" ? "самоприёмка" : "доверительная"})
                       </span>
-                      <span>{dispatchFee} ₽</span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">
-                        Обработка ({acceptanceType === "employee" ? "сотрудник Ozon" : "партнёр"})
-                      </span>
-                      <span>{processingFee} ₽</span>
+                      <span>{processingFee.toFixed(2)} ₽</span>
                     </div>
                     <div className="flex items-center justify-between text-sm font-bold border-t pt-2">
                       <span>Итого тариф FBS за отгрузку</span>
-                      <span className="text-lg">{totalFbsFee} ₽</span>
+                      <span className="text-lg">{totalFbsFee.toFixed(2)} ₽</span>
                     </div>
                   </div>
                 );
