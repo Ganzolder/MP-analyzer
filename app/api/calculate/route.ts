@@ -249,33 +249,24 @@ export async function POST(request: NextRequest) {
       const dispatchFee = dispatchTariff?.dispatchFee || 0;
 
       // Тариф за обработку (processing)
+      // Новая логика: фиксированные тарифы без учета таблицы
       let processingFee = 0;
-      let processingDetailsNote = "";
-      if (acceptanceType) {
-        // Специальный случай: СЦ + самоприёмка или доверительная приёмка = тариф 10
-        if (pickupPointType === "sc" && (acceptanceType === "self" || acceptanceType === "trust")) {
+      if (pickupPointType === "pvz-ppz") {
+        // ПВЗ/ППЗ - всегда 30 рублей независимо от типа приёмки
+        processingFee = 30;
+      } else if (pickupPointType === "sc") {
+        // СЦ - зависит от типа приёмки
+        if (acceptanceType === "employee") {
+          // СЦ + сотрудник = 20 рублей
+          processingFee = 20;
+        } else if (acceptanceType === "self" || acceptanceType === "trust") {
+          // СЦ + самоприёмка или доверительная = 10 рублей
           processingFee = 10;
-          processingDetailsNote = " (спец. тариф для СЦ)";
-        } else {
-          const isPvz = pickupPointType === "pvz-ppz";
-          const processingTariffs = await prisma.processingTariff.findMany({
-            where: { marketplace: mkt, isActive: true },
-          });
-          const relevant = processingTariffs.filter((t) => {
-            const pl = t.shipmentPointType.toLowerCase();
-            return isPvz ? (pl.includes("пвз") || pl.includes("ппз")) : pl.includes("сц");
-          });
-          const first = relevant.length > 0 ? relevant[0] : null;
-          processingFee = first
-            ? acceptanceType === "employee"
-              ? first.ozonProcessingFee
-              : first.partnerProcessingFee
-            : 0;
         }
       }
 
       fbsProcessingFee = dispatchFee + processingFee;
-      fbsProcessingDetails = `Отправление: ${dispatchFee} ₽ + Обработка: ${processingFee} ₽${processingDetailsNote} = ${fbsProcessingFee} ₽`;
+      fbsProcessingDetails = `Отправление: ${dispatchFee} ₽ + Обработка: ${processingFee} ₽ = ${fbsProcessingFee} ₽`;
     }
 
     // ─── 4. ЭКВАЙРИНГ ───────────────────────────────────────────
