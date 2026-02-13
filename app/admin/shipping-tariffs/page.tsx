@@ -9,6 +9,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Pencil } from "lucide-react";
 
 interface UploadStats {
   total: number;
@@ -92,6 +94,17 @@ export default function ShippingTariffsUploadPage() {
     Array<{ marketplace: string; deliveryMethod: string | null; priceBand?: string | null; count: number }>
   >([]);
   const [filters, setFilters] = useState({ marketplace: "all", deliveryMethod: "all", priceBand: "all", search: "" });
+
+  // Редактирование тарифа
+  const [editingTariff, setEditingTariff] = useState<ShippingTariff | null>(null);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [editForm, setEditForm] = useState({
+    basePrice: "",
+    volumeMin: "",
+    volumeMax: "",
+    isActive: true,
+  });
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selected = event.target.files?.[0] ?? null;
@@ -283,6 +296,84 @@ export default function ShippingTariffsUploadPage() {
   useEffect(() => {
     loadTariffs(1);
   }, [filters.marketplace, filters.deliveryMethod, filters.priceBand, filters.search]);
+
+  // Открытие диалога редактирования
+  const handleEditClick = (tariff: ShippingTariff) => {
+    setEditingTariff(tariff);
+    setEditForm({
+      basePrice: tariff.basePrice.toString(),
+      volumeMin: tariff.volumeMin !== null ? (tariff.volumeMin / 1000).toFixed(3) : "",
+      volumeMax: tariff.volumeMax !== null ? (tariff.volumeMax / 1000).toFixed(3) : "",
+      isActive: tariff.isActive,
+    });
+    setIsEditDialogOpen(true);
+  };
+
+  // Сохранение изменений
+  const handleSaveEdit = async () => {
+    if (!editingTariff) return;
+
+    const basePrice = parseFloat(editForm.basePrice);
+    if (isNaN(basePrice) || basePrice < 0) {
+      setError("Стоимость должна быть неотрицательным числом");
+      return;
+    }
+
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      const updateData: any = {
+        id: editingTariff.id,
+        basePrice,
+        isActive: editForm.isActive,
+      };
+
+      // Конвертируем литры в см³
+      if (editForm.volumeMin) {
+        const volMin = parseFloat(editForm.volumeMin);
+        if (!isNaN(volMin)) {
+          updateData.volumeMin = Math.round(volMin * 1000);
+        }
+      } else {
+        updateData.volumeMin = null;
+      }
+
+      if (editForm.volumeMax) {
+        const volMax = parseFloat(editForm.volumeMax);
+        if (!isNaN(volMax)) {
+          updateData.volumeMax = Math.round(volMax * 1000);
+        }
+      } else {
+        updateData.volumeMax = null;
+      }
+
+      const response = await fetch("/api/shipping-tariffs/update", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updateData),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        setError(data.error || "Не удалось обновить тариф");
+      } else {
+        setIsEditDialogOpen(false);
+        setEditingTariff(null);
+        // Обновляем список
+        await loadTariffs(pagination.page);
+        setResult({
+          success: true,
+          message: "Тариф успешно обновлён",
+        });
+      }
+    } catch (err: any) {
+      setError(err.message || "Ошибка при обновлении тарифа");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
     <div className="container mx-auto py-8 px-4">
@@ -564,6 +655,7 @@ export default function ShippingTariffsUploadPage() {
                         <th className="text-left py-3 px-2 font-medium">Регион от</th>
                         <th className="text-left py-3 px-2 font-medium">Регион до</th>
                         <th className="text-center py-3 px-2 font-medium">Активен</th>
+                        <th className="text-center py-3 px-2 font-medium">Действия</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -611,6 +703,16 @@ export default function ShippingTariffsUploadPage() {
                               <Badge variant="secondary">Нет</Badge>
                             )}
                           </td>
+                          <td className="py-3 px-2 text-center">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleEditClick(tariff)}
+                              className="h-8 w-8 p-0"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -650,6 +752,114 @@ export default function ShippingTariffsUploadPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Диалог редактирования тарифа */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Редактирование тарифа</DialogTitle>
+            <DialogDescription>
+              Измените параметры тарифа доставки. Изменения сохранятся в базе данных.
+            </DialogDescription>
+          </DialogHeader>
+
+          {editingTariff && (
+            <div className="space-y-4 py-4">
+              {/* Информация о тарифе */}
+              <div className="rounded-lg bg-muted/50 p-3 space-y-1 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">Маркетплейс:</span>
+                  <Badge variant="outline">{editingTariff.marketplace.toUpperCase()}</Badge>
+                  <Badge>{editingTariff.deliveryMethod?.toUpperCase() || "-"}</Badge>
+                  {editingTariff.priceBand && (
+                    <Badge variant="outline">
+                      {editingTariff.priceBand === "up_to_300" ? "До 300 ₽" : "От 301 ₽"}
+                    </Badge>
+                  )}
+                </div>
+              </div>
+
+              {/* Стоимость */}
+              <div className="space-y-2">
+                <Label htmlFor="edit-basePrice">
+                  Стоимость доставки, ₽ <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="edit-basePrice"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={editForm.basePrice}
+                  onChange={(e) => setEditForm({ ...editForm, basePrice: e.target.value })}
+                  placeholder="0.00"
+                  className="text-lg font-semibold"
+                />
+              </div>
+
+              {/* Объём (мин) */}
+              <div className="space-y-2">
+                <Label htmlFor="edit-volumeMin">Объём от, л</Label>
+                <Input
+                  id="edit-volumeMin"
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  value={editForm.volumeMin}
+                  onChange={(e) => setEditForm({ ...editForm, volumeMin: e.target.value })}
+                  placeholder="0.000"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Оставьте пустым для "от 0" или "без ограничений"
+                </p>
+              </div>
+
+              {/* Объём (макс) */}
+              <div className="space-y-2">
+                <Label htmlFor="edit-volumeMax">Объём до, л</Label>
+                <Input
+                  id="edit-volumeMax"
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  value={editForm.volumeMax}
+                  onChange={(e) => setEditForm({ ...editForm, volumeMax: e.target.value })}
+                  placeholder="0.000"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Оставьте пустым для "без ограничений" (например, "от 190 л")
+                </p>
+              </div>
+
+              {/* Активен */}
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="edit-isActive"
+                  checked={editForm.isActive}
+                  onChange={(e) => setEditForm({ ...editForm, isActive: e.target.checked })}
+                  className="h-4 w-4 rounded border-gray-300"
+                />
+                <Label htmlFor="edit-isActive" className="cursor-pointer">
+                  Тариф активен (используется в расчётах)
+                </Label>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIsEditDialogOpen(false)}
+              disabled={isSaving}
+            >
+              Отмена
+            </Button>
+            <Button onClick={handleSaveEdit} disabled={isSaving}>
+              {isSaving ? "Сохранение..." : "Сохранить"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
