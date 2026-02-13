@@ -22,6 +22,17 @@ interface SearchResult {
   type: "category" | "productType";
 }
 
+interface ProcessingTariff {
+  shipmentPointType: string;
+  ozonProcessingFee: number;
+  partnerProcessingFee: number;
+}
+
+interface DispatchTariff {
+  shipmentPointGroup: string;
+  dispatchFee: number;
+}
+
 interface CommissionRates {
   categoryName: string | null;
   productType: string | null;
@@ -82,6 +93,10 @@ export function OzonSingleProductCalculator() {
   const [commissionRates, setCommissionRates] = useState<CommissionRates | null>(null);
   const [isLoadingRates, setIsLoadingRates] = useState(false);
 
+  // Тарифы обработки и отправления
+  const [processingTariffs, setProcessingTariffs] = useState<ProcessingTariff[]>([]);
+  const [dispatchTariffs, setDispatchTariffs] = useState<DispatchTariff[]>([]);
+
   // Поиск категорий и типов товаров по названию
   useEffect(() => {
     const searchCategories = async () => {
@@ -127,6 +142,29 @@ export function OzonSingleProductCalculator() {
 
     return () => clearTimeout(timeoutId);
   }, [productName, category]);
+
+  // Загрузка тарифов обработки и отправления при монтировании
+  useEffect(() => {
+    const loadTariffs = async () => {
+      try {
+        const [procRes, dispRes] = await Promise.all([
+          fetch("/api/processing-tariffs?marketplace=ozon"),
+          fetch("/api/dispatch-tariffs?marketplace=ozon"),
+        ]);
+        const procData = await procRes.json();
+        const dispData = await dispRes.json();
+        if (procData.success && procData.data) {
+          setProcessingTariffs(procData.data);
+        }
+        if (dispData.success && dispData.data) {
+          setDispatchTariffs(dispData.data);
+        }
+      } catch (error) {
+        console.error("Ошибка при загрузке тарифов:", error);
+      }
+    };
+    loadTariffs();
+  }, []);
 
   // Загрузка ставок комиссии при выборе категории
   useEffect(() => {
@@ -636,6 +674,121 @@ export function OzonSingleProductCalculator() {
               </SelectContent>
             </Select>
           </div>
+
+          {/* Блок актуальных тарифов отгрузки */}
+          {pickupPointType && (
+            <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
+              <h4 className="text-sm font-semibold">Актуальные тарифы FBS</h4>
+
+              {/* Тариф за отправление */}
+              {(() => {
+                const groupName = pickupPointType === "pvz-ppz" ? "ПВЗ/ППЗ" : "СЦ";
+                const dispatchTariff = dispatchTariffs.find(
+                  (t) => t.shipmentPointGroup === groupName
+                );
+                return dispatchTariff ? (
+                  <div className="flex items-center justify-between bg-purple-50 dark:bg-purple-950/30 text-purple-700 dark:text-purple-300 px-3 py-2 rounded-md">
+                    <span className="text-sm">Тариф за отправление ({groupName})</span>
+                    <span className="text-sm font-bold">{dispatchTariff.dispatchFee} ₽</span>
+                  </div>
+                ) : null;
+              })()}
+
+              {/* Тарифы обработки */}
+              {processingTariffs.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-xs text-muted-foreground font-medium">Тарифы за обработку отправления:</p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b">
+                          <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Тип точки</th>
+                          <th className="text-right py-1.5 px-2 font-medium text-blue-600">Ozon, ₽</th>
+                          <th className="text-right py-1.5 px-2 font-medium text-green-600">Партнёры, ₽</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {processingTariffs.map((t, idx) => {
+                          // Определяем, подходит ли эта строка к выбранному типу пункта
+                          const isPvz = pickupPointType === "pvz-ppz";
+                          const isSc = pickupPointType === "sc";
+                          const pointLower = t.shipmentPointType.toLowerCase();
+                          const matchesPvz = pointLower.includes("пвз") || pointLower.includes("ппз");
+                          const matchesSc = pointLower.includes("сц");
+                          const isRelevant = (isPvz && matchesPvz) || (isSc && matchesSc);
+
+                          if (!isRelevant) return null;
+
+                          return (
+                            <tr
+                              key={idx}
+                              className="border-b last:border-0 hover:bg-muted/20"
+                            >
+                              <td className="py-1.5 px-2">{t.shipmentPointType}</td>
+                              <td className="text-right py-1.5 px-2 font-medium">{t.ozonProcessingFee} ₽</td>
+                              <td className="text-right py-1.5 px-2 font-medium">{t.partnerProcessingFee} ₽</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Итого при выборе приёмки */}
+              {acceptanceType && (() => {
+                const groupName = pickupPointType === "pvz-ppz" ? "ПВЗ/ППЗ" : "СЦ";
+                const dispatchTariff = dispatchTariffs.find(
+                  (t) => t.shipmentPointGroup === groupName
+                );
+                const dispatchFee = dispatchTariff?.dispatchFee || 0;
+
+                // Для расчёта берём среднее/первое подходящее значение обработки
+                const isPvz = pickupPointType === "pvz-ppz";
+                const relevantProcessing = processingTariffs.filter((t) => {
+                  const pl = t.shipmentPointType.toLowerCase();
+                  return isPvz ? (pl.includes("пвз") || pl.includes("ппз")) : pl.includes("сц");
+                });
+
+                // Выбираем первый подходящий тариф обработки
+                const firstProcessing = relevantProcessing.length > 0 ? relevantProcessing[0] : null;
+
+                // Тариф обработки зависит от типа приёмки:
+                // "employee" (сотрудник) → Ozon обработка
+                // "self" (самоприёмка) → партнёр обработка
+                // "trust" (доверительная) → партнёр обработка
+                const processingFee = firstProcessing
+                  ? acceptanceType === "employee"
+                    ? firstProcessing.ozonProcessingFee
+                    : firstProcessing.partnerProcessingFee
+                  : 0;
+
+                const totalFbsFee = dispatchFee + processingFee;
+
+                return (
+                  <div className="border-t pt-3 mt-2 space-y-2">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">
+                        Отправление ({groupName})
+                      </span>
+                      <span>{dispatchFee} ₽</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">
+                        Обработка ({acceptanceType === "employee" ? "сотрудник Ozon" : "партнёр"})
+                      </span>
+                      <span>{processingFee} ₽</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm font-bold border-t pt-2">
+                      <span>Итого тариф FBS за отгрузку</span>
+                      <span className="text-lg">{totalFbsFee} ₽</span>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
         </CardContent>
       </Card>
 
