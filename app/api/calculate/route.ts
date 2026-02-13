@@ -105,39 +105,126 @@ export async function POST(request: NextRequest) {
 
     // Функция поиска тарифа логистики
     const findShippingCost = async (deliveryMethod: string): Promise<{ cost: number; tariffDetails: string }> => {
-      // Ищем тариф по объёму (volumeMin <= volumeCm3 < volumeMax)
-      const tariff = await prisma.shippingTariff.findFirst({
-        where: {
-          marketplace: mkt,
-          deliveryMethod: deliveryMethod.toLowerCase(),
-          priceBand: priceBand,
-          isActive: true,
-          volumeMin: { lte: volumeCm3 },
-          OR: [
-            { volumeMax: { gte: volumeCm3 } },
-            { volumeMax: null }, // Для "Более X л" — без верхней границы
-          ],
-        },
-        orderBy: { volumeMin: "asc" },
-      });
+      // Для товаров до 300₽ — старая логика
+      if (priceBand === "up_to_300") {
+        const tariff = await prisma.shippingTariff.findFirst({
+          where: {
+            marketplace: mkt,
+            deliveryMethod: deliveryMethod.toLowerCase(),
+            priceBand: priceBand,
+            isActive: true,
+            volumeMin: { lte: volumeCm3 },
+            OR: [
+              { volumeMax: { gte: volumeCm3 } },
+              { volumeMax: null },
+            ],
+          },
+          orderBy: { volumeMin: "asc" },
+        });
 
-      if (!tariff) {
-        return { cost: 0, tariffDetails: "Тариф не найден" };
-      }
+        if (!tariff) {
+          return { cost: 0, tariffDetails: "Тариф не найден" };
+        }
 
-      // Для товаров >300₽ и объёмом >3л — тариф за литр
-      if (priceBand === "over_300" && volumeLiters > 3) {
-        const cost = Math.round(volumeLiters * tariff.basePrice * 100) / 100;
         return {
-          cost,
-          tariffDetails: `${volumeLiters.toFixed(3)} л × ${tariff.basePrice} ₽/л = ${cost} ₽`,
+          cost: tariff.basePrice,
+          tariffDetails: `Фикс. ${tariff.basePrice} ₽ (объём ${volumeLiters.toFixed(3)} л)`,
         };
       }
 
-      // Фиксированный тариф
+      // Для товаров от 301₽ — новая логика
+      // Ищем тарифы для разных диапазонов объёма
+      const findTariffForVolume = async (targetVolumeCm3: number) => {
+        // Ищем тариф, который покрывает конкретный объём
+        // volumeMin <= targetVolumeCm3 <= volumeMax (или volumeMax = null)
+        return await prisma.shippingTariff.findFirst({
+          where: {
+            marketplace: mkt,
+            deliveryMethod: deliveryMethod.toLowerCase(),
+            priceBand: "over_300",
+            isActive: true,
+            volumeMin: { lte: targetVolumeCm3 },
+            OR: [
+              { volumeMax: { gte: targetVolumeCm3 } },
+              { volumeMax: null },
+            ],
+          },
+          orderBy: { volumeMin: "desc" }, // Более специфичный тариф (с большим volumeMin)
+        });
+      };
+
+      // Тарифы для разных диапазонов
+      // Ищем тарифы, которые покрывают объёмы в соответствующих диапазонах
+      const tariffUpTo1L = await findTariffForVolume(volumeLiters <= 1 ? volumeCm3 : 500); // до 1л
+      const tariff1To2L = await findTariffForVolume(volumeLiters > 1 && volumeLiters <= 2 ? volumeCm3 : 1500); // 1-2л
+      const tariff2To3L = await findTariffForVolume(volumeLiters > 2 && volumeLiters <= 3 ? volumeCm3 : 2500); // 2-3л (фикс для расчётов)
+      // Для диапазонов 3-190л и 190-1000л используем объём товара, если он попадает в диапазон, иначе примерный объём
+      const tariff3To190L = await findTariffForVolume(volumeLiters > 3 && volumeLiters <= 190 ? volumeCm3 : 50000); // 3-190л (тариф за литр)
+      const tariff190To1000L = await findTariffForVolume(volumeLiters > 190 && volumeLiters <= 1000 ? volumeCm3 : 500000); // 190-1000л (тариф за литр)
+      const tariffOver1000L = await findTariffForVolume(volumeLiters > 1000 ? volumeCm3 : 1500000); // от 1000л
+
+      let cost = 0;
+      let details: string[] = [];
+
+      if (volumeLiters <= 1) {
+        // до 1л - фикс по таблице
+        if (!tariffUpTo1L) {
+          return { cost: 0, tariffDetails: "Тариф не найден (до 1л)" };
+        }
+        cost = tariffUpTo1L.basePrice;
+        details.push(`Фикс. ${cost} ₽ (до 1л)`);
+      } else if (volumeLiters <= 2) {
+        // от 1 до 2л - фикс по таблице
+        if (!tariff1To2L) {
+          return { cost: 0, tariffDetails: "Тариф не найден (1-2л)" };
+        }
+        cost = tariff1To2L.basePrice;
+        details.push(`Фикс. ${cost} ₽ (1-2л)`);
+      } else if (volumeLiters <= 3) {
+        // от 2 до 3л - фикс по таблице
+        if (!tariff2To3L) {
+          return { cost: 0, tariffDetails: "Тариф не найден (2-3л)" };
+        }
+        cost = tariff2To3L.basePrice;
+        details.push(`Фикс. ${cost} ₽ (2-3л)`);
+      } else if (volumeLiters <= 190) {
+        // от 3 до 190л - фикс по тарифу от 2 до 3л плюс объем свыше 3л умноженный на тариф по таблице
+        if (!tariff2To3L || !tariff3To190L) {
+          return { cost: 0, tariffDetails: "Тариф не найден (3-190л)" };
+        }
+        const fixedCost = tariff2To3L.basePrice;
+        const volumeOver3L = volumeLiters - 3;
+        const volumeCost = volumeOver3L * tariff3To190L.basePrice;
+        cost = fixedCost + volumeCost;
+        details.push(`Фикс. ${fixedCost} ₽ (2-3л)`);
+        details.push(`+ ${volumeOver3L.toFixed(3)} л × ${tariff3To190L.basePrice} ₽/л = ${volumeCost.toFixed(2)} ₽`);
+      } else if (volumeLiters <= 1000) {
+        // от 190 до 1000л - фикс по тарифу от 2 до 3л плюс объем свыше 3л умноженный на тариф по таблице но до 190л и далее плюс весь объем свыше 190л умноженный на тариф по таблице
+        if (!tariff2To3L || !tariff3To190L || !tariff190To1000L) {
+          return { cost: 0, tariffDetails: "Тариф не найден (190-1000л)" };
+        }
+        const fixedCost = tariff2To3L.basePrice;
+        const volume3To190L = 190 - 3; // 187л
+        const volumeCost3To190 = volume3To190L * tariff3To190L.basePrice;
+        const volumeOver190L = volumeLiters - 190;
+        const volumeCostOver190 = volumeOver190L * tariff190To1000L.basePrice;
+        cost = fixedCost + volumeCost3To190 + volumeCostOver190;
+        details.push(`Фикс. ${fixedCost} ₽ (2-3л)`);
+        details.push(`+ ${volume3To190L} л × ${tariff3To190L.basePrice} ₽/л = ${volumeCost3To190.toFixed(2)} ₽ (3-190л)`);
+        details.push(`+ ${volumeOver190L.toFixed(3)} л × ${tariff190To1000L.basePrice} ₽/л = ${volumeCostOver190.toFixed(2)} ₽ (свыше 190л)`);
+      } else {
+        // от 1000л - фикс по таблице
+        if (!tariffOver1000L) {
+          return { cost: 0, tariffDetails: "Тариф не найден (от 1000л)" };
+        }
+        cost = tariffOver1000L.basePrice;
+        details.push(`Фикс. ${cost} ₽ (от 1000л)`);
+      }
+
+      cost = Math.round(cost * 100) / 100;
       return {
-        cost: tariff.basePrice,
-        tariffDetails: `Фикс. ${tariff.basePrice} ₽ (объём ${volumeLiters.toFixed(3)} л)`,
+        cost,
+        tariffDetails: details.join(" | "),
       };
     };
 
