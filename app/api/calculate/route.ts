@@ -240,33 +240,47 @@ export async function POST(request: NextRequest) {
     let fbsProcessingFee = 0;
     let fbsProcessingDetails = "";
 
-    if (pickupPointType) {
-      // Тариф за отправление (dispatch)
-      const groupName = pickupPointType === "pvz-ppz" ? "ПВЗ/ППЗ" : "СЦ";
-      const dispatchTariff = await prisma.dispatchTariff.findFirst({
-        where: { marketplace: mkt, shipmentPointGroup: groupName, isActive: true },
+    if (pickupPointType && acceptanceType) {
+      // Тарифы обработки отправлений исключены из расчёта
+      // Используем только тарифы обработки из таблицы ProcessingTariff
+      
+      // Ищем тарифы обработки в базе данных
+      const processingTariffs = await prisma.processingTariff.findMany({
+        where: { marketplace: mkt, isActive: true },
       });
-      const dispatchFee = dispatchTariff?.dispatchFee || 0;
 
-      // Тариф за обработку (processing)
-      // Новая логика: фиксированные тарифы без учета таблицы
       let processingFee = 0;
+
       if (pickupPointType === "pvz-ppz") {
-        // ПВЗ/ППЗ - всегда 30 рублей независимо от типа приёмки
-        processingFee = 30;
+        // ПВЗ/ППЗ - берём тариф из таблицы (независимо от типа приёмки)
+        const relevant = processingTariffs.filter((t) => {
+          const pl = t.shipmentPointType.toLowerCase();
+          return pl.includes("пвз") || pl.includes("ппз");
+        });
+        const first = relevant.length > 0 ? relevant[0] : null;
+        // Берём ozonProcessingFee (не важно какой тип приёмки для ПВЗ/ППЗ)
+        processingFee = first?.ozonProcessingFee || 0;
       } else if (pickupPointType === "sc") {
         // СЦ - зависит от типа приёмки
-        if (acceptanceType === "employee") {
-          // СЦ + сотрудник = 20 рублей
-          processingFee = 20;
-        } else if (acceptanceType === "self" || acceptanceType === "trust") {
-          // СЦ + самоприёмка или доверительная = 10 рублей
-          processingFee = 10;
+        const relevant = processingTariffs.filter((t) => {
+          const pl = t.shipmentPointType.toLowerCase();
+          return pl.includes("сц");
+        });
+        const first = relevant.length > 0 ? relevant[0] : null;
+        
+        if (first) {
+          if (acceptanceType === "employee") {
+            // СЦ + сотрудник - берём тариф из таблицы (ozonProcessingFee)
+            processingFee = first.ozonProcessingFee;
+          } else if (acceptanceType === "self" || acceptanceType === "trust") {
+            // СЦ + самоприёмка или доверительная - берём тариф из таблицы и делим на 2
+            processingFee = first.ozonProcessingFee / 2;
+          }
         }
       }
 
-      fbsProcessingFee = dispatchFee + processingFee;
-      fbsProcessingDetails = `Отправление: ${dispatchFee} ₽ + Обработка: ${processingFee} ₽ = ${fbsProcessingFee} ₽`;
+      fbsProcessingFee = processingFee;
+      fbsProcessingDetails = `Обработка: ${processingFee.toFixed(2)} ₽`;
     }
 
     // ─── 4. ЭКВАЙРИНГ ───────────────────────────────────────────
