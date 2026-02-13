@@ -19,6 +19,7 @@ interface FulfillmentResult {
   shippingDetails: string;
   processingFee: number;
   processingDetails: string;
+  deliveryToPickupPoint?: number;
   acquiringFee: number;
   totalFees: number;
   profit: number;
@@ -112,6 +113,7 @@ export function OzonSingleProductCalculator() {
   const [shipmentMethod, setShipmentMethod] = useState<"pickup" | "courier">("pickup");
   const [pickupPointType, setPickupPointType] = useState<string>("");
   const [acceptanceType, setAcceptanceType] = useState<string>("");
+  const [deliveryToPickupPoint, setDeliveryToPickupPoint] = useState<string>("25"); // Доставка до места выдачи
 
   // Себестоимость
   const [costMode, setCostMode] = useState<"single" | "batch">("single");
@@ -373,6 +375,7 @@ export function OzonSingleProductCalculator() {
           volumeLiters: vol,
           pickupPointType: pickupPointType || undefined,
           acceptanceType: acceptanceType || undefined,
+          deliveryToPickupPoint: parseFloat(deliveryToPickupPoint) || 0,
           productCost: parseFloat(productCost) || 0,
           otherExpenses: parseFloat(otherExpenses) || 0,
         }),
@@ -790,6 +793,23 @@ export function OzonSingleProductCalculator() {
             </Select>
           </div>
 
+          {/* Доставка до места выдачи */}
+          <div className="space-y-2">
+            <Label htmlFor="deliveryToPickupPoint">Доставка до места выдачи, ₽</Label>
+            <Input
+              id="deliveryToPickupPoint"
+              type="number"
+              step="0.01"
+              min="0"
+              value={deliveryToPickupPoint}
+              onChange={(e) => setDeliveryToPickupPoint(e.target.value)}
+              placeholder="25"
+            />
+            <p className="text-xs text-muted-foreground">
+              Стоимость доставки товара до места выдачи (ПВЗ/ППЗ/СЦ). Прибавляется к расчёту FBS всегда.
+            </p>
+          </div>
+
           {/* Блок актуальных тарифов отгрузки */}
           {pickupPointType && (
             <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
@@ -1094,6 +1114,18 @@ export function OzonSingleProductCalculator() {
                     <td className="text-right py-2.5 px-3 text-muted-foreground">вкл.</td>
                     <td className="text-right py-2.5 px-3 text-red-500">
                       {calcResult.fbs.processingFee > 0 ? `−${fmtMoney(calcResult.fbs.processingFee)}` : "—"}
+                    </td>
+                    <td className="text-right py-2.5 px-3 text-muted-foreground">—</td>
+                  </tr>
+
+                  {/* Доставка до места выдачи */}
+                  <tr className="border-b">
+                    <td className="py-2.5 px-3">
+                      Доставка до места выдачи
+                    </td>
+                    <td className="text-right py-2.5 px-3 text-muted-foreground">—</td>
+                    <td className="text-right py-2.5 px-3 text-red-500">
+                      {calcResult.fbs.deliveryToPickupPoint ? `−${fmtMoney(calcResult.fbs.deliveryToPickupPoint)}` : "—"}
                     </td>
                     <td className="text-right py-2.5 px-3 text-muted-foreground">—</td>
                   </tr>

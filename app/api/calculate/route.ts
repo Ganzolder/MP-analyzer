@@ -19,6 +19,7 @@ export async function POST(request: NextRequest) {
       // Параметры отгрузки FBS
       pickupPointType, // "pvz-ppz" | "sc"
       acceptanceType, // "employee" | "self" | "trust"
+      deliveryToPickupPoint = 25, // Доставка до места выдачи, ₽ (по умолчанию 25)
       // Себестоимость
       productCost = 0, // Себестоимость товара, ₽
       otherExpenses = 0, // Прочие затраты, ₽
@@ -287,7 +288,8 @@ export async function POST(request: NextRequest) {
     const fboMargin = price > 0 ? Math.round(fboProfit / price * 10000) / 100 : 0;
 
     // FBS
-    const fbsTotalFees = fbsCommission + fbsShipping.cost + fbsProcessingFee + acquiringFee;
+    // Всегда прибавляем доставку до места выдачи к расчёту FBS
+    const fbsTotalFees = fbsCommission + fbsShipping.cost + fbsProcessingFee + deliveryToPickupPoint + acquiringFee;
     const fbsProfit = price - fbsTotalFees - totalCost;
     const fbsMargin = price > 0 ? Math.round(fbsProfit / price * 10000) / 100 : 0;
 
@@ -331,6 +333,7 @@ export async function POST(request: NextRequest) {
           shippingDetails: fbsShipping.tariffDetails,
           processingFee: fbsProcessingFee,
           processingDetails: fbsProcessingDetails || "Не выбран тип отгрузки",
+          deliveryToPickupPoint: deliveryToPickupPoint,
           acquiringFee,
           totalFees: Math.round(fbsTotalFees * 100) / 100,
           profit: Math.round(fbsProfit * 100) / 100,
