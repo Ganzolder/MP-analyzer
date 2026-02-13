@@ -218,6 +218,12 @@ export function OzonSingleProductCalculator() {
     }
   }, [dimensionMode, length, width, height]);
 
+  // Форматирование процента — округление до целых (44.999999 → 45)
+  const fmtPct = (v: number | null): string => {
+    if (v === null || v === undefined) return "—";
+    return `${Math.round(v)}%`;
+  };
+
   // Форматирование числа с пробелами для тысяч
   const formatNumber = (value: string): string => {
     if (!value) return "";
@@ -362,19 +368,19 @@ export function OzonSingleProductCalculator() {
                   {activeCommission.fbo !== null && (
                     <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 px-3 py-1.5 rounded-md text-sm font-medium">
                       <span>FBO:</span>
-                      <span className="font-bold">{activeCommission.fbo}%</span>
+                      <span className="font-bold">{fmtPct(activeCommission.fbo)}</span>
                     </div>
                   )}
                   {activeCommission.fbs !== null && (
                     <div className="flex items-center gap-1.5 bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-300 px-3 py-1.5 rounded-md text-sm font-medium">
                       <span>FBS:</span>
-                      <span className="font-bold">{activeCommission.fbs}%</span>
+                      <span className="font-bold">{fmtPct(activeCommission.fbs)}</span>
                     </div>
                   )}
                   {activeCommission.rfbs !== null && (
                     <div className="flex items-center gap-1.5 bg-orange-50 dark:bg-orange-950/30 text-orange-700 dark:text-orange-300 px-3 py-1.5 rounded-md text-sm font-medium">
                       <span>RFBS:</span>
-                      <span className="font-bold">{activeCommission.rfbs}%</span>
+                      <span className="font-bold">{fmtPct(activeCommission.rfbs)}</span>
                     </div>
                   )}
                   <span className="text-xs text-muted-foreground self-center">
@@ -422,18 +428,10 @@ export function OzonSingleProductCalculator() {
                             {row.label}
                             {highlighted && <span className="ml-1 text-yellow-600">●</span>}
                           </td>
-                          <td className="text-center py-1.5 px-2">
-                            {row.fbo !== null ? `${row.fbo}%` : "—"}
-                          </td>
-                          <td className="text-center py-1.5 px-2">
-                            {row.fboFresh !== null ? `${row.fboFresh}%` : "—"}
-                          </td>
-                          <td className="text-center py-1.5 px-2">
-                            {row.fbs !== null ? `${row.fbs}%` : "—"}
-                          </td>
-                          <td className="text-center py-1.5 px-2">
-                            {row.rfbs !== null ? `${row.rfbs}%` : "—"}
-                          </td>
+                          <td className="text-center py-1.5 px-2">{fmtPct(row.fbo)}</td>
+                          <td className="text-center py-1.5 px-2">{fmtPct(row.fboFresh)}</td>
+                          <td className="text-center py-1.5 px-2">{fmtPct(row.fbs)}</td>
+                          <td className="text-center py-1.5 px-2">{fmtPct(row.rfbs)}</td>
                         </tr>
                       );
                     })}
