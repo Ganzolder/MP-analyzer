@@ -237,6 +237,12 @@ export async function POST(request: NextRequest) {
     const fbsShipping = await findShippingCost("fbs");
 
     // ─── 3. ТАРИФ ЗА ОТПРАВЛЕНИЕ FBS ────────────────────────────
+    // Дефолтные тарифы за отправление (если в БД нет данных)
+    const DEFAULT_DISPATCH_FEES: Record<string, number> = {
+      "ПВЗ/ППЗ": 30,
+      "СЦ": 20,
+    };
+
     let fbsDispatchFee = 0;
     let fbsDispatchDetails = "";
 
@@ -262,36 +268,56 @@ export async function POST(request: NextRequest) {
       
       // Сначала ищем с конкретным shipmentMethod (если указан)
       let dispatchTariff = null;
-      if (shipmentMethod) {
-        dispatchTariff = await prisma.dispatchTariff.findFirst({
-          where: {
-            marketplace: mkt,
-            shipmentPointGroup: groupName,
-            shipmentMethod: shipmentMethod,
-            isActive: true,
-          },
-        });
-      }
-      
-      // Если не найден, ищем с null (для обратной совместимости или общих тарифов)
-      if (!dispatchTariff) {
-        dispatchTariff = await prisma.dispatchTariff.findFirst({
-          where: {
-            marketplace: mkt,
-            shipmentPointGroup: groupName,
-            shipmentMethod: null,
-            isActive: true,
-          },
-        });
+      try {
+        if (shipmentMethod) {
+          dispatchTariff = await prisma.dispatchTariff.findFirst({
+            where: {
+              marketplace: mkt,
+              shipmentPointGroup: groupName,
+              shipmentMethod: shipmentMethod,
+              isActive: true,
+            },
+          });
+        }
+        
+        // Если не найден, ищем с null (для обратной совместимости или общих тарифов)
+        if (!dispatchTariff) {
+          dispatchTariff = await prisma.dispatchTariff.findFirst({
+            where: {
+              marketplace: mkt,
+              shipmentPointGroup: groupName,
+              shipmentMethod: null,
+              isActive: true,
+            },
+          });
+        }
+        
+        // Если всё ещё не найден, ищем любой тариф для группы
+        if (!dispatchTariff) {
+          dispatchTariff = await prisma.dispatchTariff.findFirst({
+            where: {
+              marketplace: mkt,
+              shipmentPointGroup: groupName,
+              isActive: true,
+            },
+          });
+        }
+      } catch (e) {
+        // Таблица может не существовать — используем дефолты
+        console.log("⚠️ Таблица DispatchTariff не найдена, используем дефолты");
       }
 
       if (dispatchTariff) {
         fbsDispatchFee = dispatchTariff.dispatchFee;
-        const methodName = shipmentMethod === "self" ? "Самоприёмка" 
-          : shipmentMethod === "trust" ? "Доверительная приёмка"
-          : "Стандартная отгрузка";
-        fbsDispatchDetails = `Отправление (${groupName}${shipmentMethod ? `, ${methodName}` : ""}): ${fbsDispatchFee} ₽`;
+      } else {
+        // Используем дефолтные значения, если в БД нет данных
+        fbsDispatchFee = DEFAULT_DISPATCH_FEES[groupName] || 0;
       }
+      
+      const methodName = shipmentMethod === "self" ? "Самоприёмка" 
+        : shipmentMethod === "trust" ? "Доверительная приёмка"
+        : "Стандартная отгрузка";
+      fbsDispatchDetails = `Отправление (${groupName}${shipmentMethod ? `, ${methodName}` : ""}): ${fbsDispatchFee} ₽`;
     }
 
     // ─── 4. ОБРАБОТКА FBS ────────────────────────────────────────

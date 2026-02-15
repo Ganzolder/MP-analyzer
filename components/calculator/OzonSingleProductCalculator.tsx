@@ -187,6 +187,12 @@ export function OzonSingleProductCalculator() {
     return () => clearTimeout(timeoutId);
   }, [productName, category]);
 
+  // Дефолтные тарифы за отправление (если в БД нет данных)
+  const DEFAULT_DISPATCH_TARIFFS: DispatchTariff[] = [
+    { shipmentPointGroup: "ПВЗ/ППЗ", shipmentMethod: null, dispatchFee: 30 },
+    { shipmentPointGroup: "СЦ", shipmentMethod: null, dispatchFee: 20 },
+  ];
+
   // Загрузка тарифов обработки и отправления при монтировании
   useEffect(() => {
     const loadTariffs = async () => {
@@ -197,14 +203,19 @@ export function OzonSingleProductCalculator() {
         ]);
         const procData = await procRes.json();
         const dispData = await dispRes.json();
-        if (procData.success && procData.data) {
+        if (procData.success && procData.data && procData.data.length > 0) {
           setProcessingTariffs(procData.data);
         }
-        if (dispData.success && dispData.data) {
+        if (dispData.success && dispData.data && dispData.data.length > 0) {
           setDispatchTariffs(dispData.data);
+        } else {
+          // Если в БД нет данных, используем дефолтные значения
+          setDispatchTariffs(DEFAULT_DISPATCH_TARIFFS);
         }
       } catch (error) {
         console.error("Ошибка при загрузке тарифов:", error);
+        // При ошибке используем дефолтные значения
+        setDispatchTariffs(DEFAULT_DISPATCH_TARIFFS);
       }
     };
     loadTariffs();
