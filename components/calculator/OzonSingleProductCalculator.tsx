@@ -59,12 +59,6 @@ interface SearchResult {
   type: "category" | "productType";
 }
 
-interface ProcessingTariff {
-  shipmentPointType: string;
-  ozonProcessingFee: number;
-  partnerProcessingFee: number;
-}
-
 interface DispatchTariff {
   shipmentPointGroup: string;
   shipmentMethod: string | null; // self, trust, standard, или null (для обратной совместимости)
@@ -132,8 +126,7 @@ export function OzonSingleProductCalculator() {
   const [commissionRates, setCommissionRates] = useState<CommissionRates | null>(null);
   const [isLoadingRates, setIsLoadingRates] = useState(false);
 
-  // Тарифы обработки и отправления
-  const [processingTariffs, setProcessingTariffs] = useState<ProcessingTariff[]>([]);
+  // Тарифы за отправление
   const [dispatchTariffs, setDispatchTariffs] = useState<DispatchTariff[]>([]);
 
   // Результаты расчёта
@@ -189,32 +182,27 @@ export function OzonSingleProductCalculator() {
 
   // Дефолтные тарифы за отправление (если в БД нет данных)
   const DEFAULT_DISPATCH_TARIFFS: DispatchTariff[] = [
-    { shipmentPointGroup: "ПВЗ/ППЗ", shipmentMethod: null, dispatchFee: 30 },
-    { shipmentPointGroup: "СЦ", shipmentMethod: null, dispatchFee: 20 },
+    { shipmentPointGroup: "ПВЗ/ППЗ", shipmentMethod: "standard", dispatchFee: 30 },
+    { shipmentPointGroup: "ПВЗ/ППЗ", shipmentMethod: "self", dispatchFee: 30 },
+    { shipmentPointGroup: "ПВЗ/ППЗ", shipmentMethod: "trust", dispatchFee: 30 },
+    { shipmentPointGroup: "СЦ", shipmentMethod: "standard", dispatchFee: 20 },
+    { shipmentPointGroup: "СЦ", shipmentMethod: "self", dispatchFee: 10 },
+    { shipmentPointGroup: "СЦ", shipmentMethod: "trust", dispatchFee: 10 },
   ];
 
-  // Загрузка тарифов обработки и отправления при монтировании
+  // Загрузка тарифов за отправление при монтировании
   useEffect(() => {
     const loadTariffs = async () => {
       try {
-        const [procRes, dispRes] = await Promise.all([
-          fetch("/api/processing-tariffs?marketplace=ozon"),
-          fetch("/api/dispatch-tariffs?marketplace=ozon"),
-        ]);
-        const procData = await procRes.json();
+        const dispRes = await fetch("/api/dispatch-tariffs?marketplace=ozon");
         const dispData = await dispRes.json();
-        if (procData.success && procData.data && procData.data.length > 0) {
-          setProcessingTariffs(procData.data);
-        }
         if (dispData.success && dispData.data && dispData.data.length > 0) {
           setDispatchTariffs(dispData.data);
         } else {
-          // Если в БД нет данных, используем дефолтные значения
           setDispatchTariffs(DEFAULT_DISPATCH_TARIFFS);
         }
       } catch (error) {
         console.error("Ошибка при загрузке тарифов:", error);
-        // При ошибке используем дефолтные значения
         setDispatchTariffs(DEFAULT_DISPATCH_TARIFFS);
       }
     };
@@ -827,210 +815,76 @@ export function OzonSingleProductCalculator() {
           {/* Блок актуальных тарифов отгрузки */}
           {pickupPointType && (
             <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
-              <h4 className="text-sm font-semibold">Актуальные тарифы FBS</h4>
+              <h4 className="text-sm font-semibold">Тариф за отправление FBS</h4>
 
-              {/* Тариф за отправление */}
               {(() => {
                 const groupName = pickupPointType === "pvz-ppz" ? "ПВЗ/ППЗ" : "СЦ";
                 
-                // Определяем способ отгрузки на основе типа приёмки
-                let shipmentMethod: string | null = null;
-                if (pickupPointType === "pvz-ppz") {
-                  // Для ПВЗ/ППЗ всегда стандартная отгрузка
-                  shipmentMethod = "standard";
-                } else if (pickupPointType === "sc") {
-                  // Для СЦ зависит от типа приёмки
-                  if (acceptanceType === "self") {
-                    shipmentMethod = "self"; // Самоприёмка
-                  } else if (acceptanceType === "trust") {
-                    shipmentMethod = "trust"; // Доверительная приёмка
-                  } else if (acceptanceType === "employee") {
-                    shipmentMethod = "standard"; // Стандартная отгрузка
-                  }
-                }
+                // Определяем способ отгрузки
+                let shipmentMethod = "standard"; // По умолчанию — сотрудник
+                if (acceptanceType === "self") shipmentMethod = "self";
+                else if (acceptanceType === "trust") shipmentMethod = "trust";
                 
-                // Ищем тариф: сначала по типу пункта и способу отгрузки, потом по типу пункта (для обратной совместимости)
+                // Ищем тариф: точное совпадение → null → любой для группы
                 const dispatchTariff = dispatchTariffs.find(
-                  (t) => t.shipmentPointGroup === groupName && 
-                         (t.shipmentMethod === shipmentMethod || t.shipmentMethod === null)
+                  (t) => t.shipmentPointGroup === groupName && t.shipmentMethod === shipmentMethod
+                ) || dispatchTariffs.find(
+                  (t) => t.shipmentPointGroup === groupName && t.shipmentMethod === null
                 ) || dispatchTariffs.find(
                   (t) => t.shipmentPointGroup === groupName
                 );
                 
-                // Определяем название способа отгрузки для отображения
-                let shipmentMethodName = "";
-                if (pickupPointType === "pvz-ppz") {
-                  shipmentMethodName = "Стандартная отгрузка";
-                } else if (acceptanceType === "self") {
-                  shipmentMethodName = "Самоприёмка";
-                } else if (acceptanceType === "trust") {
-                  shipmentMethodName = "Доверительная приёмка";
-                } else if (acceptanceType === "employee") {
-                  shipmentMethodName = "Стандартная отгрузка";
-                }
+                const methodName = acceptanceType === "self" ? "Самоприёмка" 
+                  : acceptanceType === "trust" ? "Доверительная приёмка"
+                  : "Сотрудник (стандартная отгрузка)";
                 
-                return dispatchTariff ? (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between bg-purple-50 dark:bg-purple-950/30 text-purple-700 dark:text-purple-300 px-3 py-2 rounded-md">
-                      <div className="flex flex-col">
-                        <span className="text-sm font-medium">Тариф за отправление</span>
-                        <span className="text-xs text-purple-600 dark:text-purple-400">
-                          {groupName} • {shipmentMethodName}
-                        </span>
-                      </div>
-                      <span className="text-sm font-bold">{dispatchTariff.dispatchFee} ₽</span>
-                    </div>
-                  </div>
-                ) : null;
-              })()}
-
-              {/* Тарифы обработки */}
-              {processingTariffs.length > 0 && (
-                <div className="space-y-1.5">
-                  <p className="text-xs text-muted-foreground font-medium">Тарифы за обработку отправления:</p>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b">
-                          <th className="text-left py-1.5 px-2 font-medium text-muted-foreground">Тип точки</th>
-                          <th className="text-right py-1.5 px-2 font-medium text-blue-600">Ozon, ₽</th>
-                          <th className="text-right py-1.5 px-2 font-medium text-green-600">Партнёры, ₽</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {processingTariffs.map((t, idx) => {
-                          // Определяем, подходит ли эта строка к выбранному типу пункта
-                          const isPvz = pickupPointType === "pvz-ppz";
-                          const isSc = pickupPointType === "sc";
-                          const pointLower = t.shipmentPointType.toLowerCase();
-                          const matchesPvz = pointLower.includes("пвз") || pointLower.includes("ппз");
-                          const matchesSc = pointLower.includes("сц");
-                          const isRelevant = (isPvz && matchesPvz) || (isSc && matchesSc);
-
-                          if (!isRelevant) return null;
-
-                          return (
-                            <tr
-                              key={idx}
-                              className="border-b last:border-0 hover:bg-muted/20"
-                            >
-                              <td className="py-1.5 px-2">{t.shipmentPointType}</td>
-                              <td className="text-right py-1.5 px-2 font-medium">{t.ozonProcessingFee} ₽</td>
-                              <td className="text-right py-1.5 px-2 font-medium">{t.partnerProcessingFee} ₽</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Итого при выборе приёмки */}
-              {acceptanceType && (() => {
-                // Тарифы обработки отправлений исключены из расчёта
-                // Используем только тарифы обработки из таблицы ProcessingTariff
-                
-                // Для расчёта берём первое подходящее значение обработки
-                const isPvz = pickupPointType === "pvz-ppz";
-                const relevantProcessing = processingTariffs.filter((t) => {
-                  const pl = t.shipmentPointType.toLowerCase();
-                  return isPvz ? (pl.includes("пвз") || pl.includes("ппз")) : pl.includes("сц");
-                });
-
-                // Выбираем первый подходящий тариф обработки
-                const firstProcessing = relevantProcessing.length > 0 ? relevantProcessing[0] : null;
-
-                // Тариф обработки по новой логике:
-                // ПВЗ/ППЗ - берём ozonProcessingFee (независимо от типа приёмки)
-                // СЦ + сотрудник - берём ozonProcessingFee
-                // СЦ + самоприёмка/доверительная - берём ozonProcessingFee / 2
-                let processingFee = 0;
-                if (firstProcessing) {
-                  if (isPvz) {
-                    // ПВЗ/ППЗ - берём тариф из таблицы (независимо от типа приёмки)
-                    processingFee = firstProcessing.ozonProcessingFee;
-                  } else {
-                    // СЦ - зависит от типа приёмки, но всегда берём из таблицы
-                    // По умолчанию берём полное значение из таблицы (как для employee)
-                    if (acceptanceType === "self" || acceptanceType === "trust") {
-                      // СЦ + самоприёмка или доверительная - берём тариф из таблицы и делим на 2
-                      processingFee = firstProcessing.ozonProcessingFee / 2;
-                    } else {
-                      // СЦ + сотрудник или не указан тип - берём тариф из таблицы
-                      processingFee = firstProcessing.ozonProcessingFee;
-                    }
-                  }
-                }
-
-                // Получаем тариф за отправление
-                let dispatchFee = 0;
-                if (pickupPointType) {
-                  let shipmentMethod: string | null = null;
-                  if (pickupPointType === "pvz-ppz") {
-                    shipmentMethod = "standard";
-                  } else if (pickupPointType === "sc" && acceptanceType) {
-                    if (acceptanceType === "self") {
-                      shipmentMethod = "self";
-                    } else if (acceptanceType === "trust") {
-                      shipmentMethod = "trust";
-                    } else if (acceptanceType === "employee") {
-                      shipmentMethod = "standard";
-                    }
-                  }
-                  
-                  const groupName = pickupPointType === "pvz-ppz" ? "ПВЗ/ППЗ" : "СЦ";
-                  
-                  // Сначала ищем с конкретным shipmentMethod (если указан)
-                  let dispatchTariff = null;
-                  if (shipmentMethod) {
-                    dispatchTariff = dispatchTariffs.find(
-                      (t) => t.shipmentPointGroup === groupName && 
-                             t.shipmentMethod === shipmentMethod
-                    );
-                  }
-                  
-                  // Если не найден, ищем с null (для обратной совместимости или общих тарифов)
-                  if (!dispatchTariff) {
-                    dispatchTariff = dispatchTariffs.find(
-                      (t) => t.shipmentPointGroup === groupName && 
-                             t.shipmentMethod === null
-                    );
-                  }
-                  
-                  // Если всё ещё не найден, ищем любой тариф для этой группы (fallback)
-                  if (!dispatchTariff) {
-                    dispatchTariff = dispatchTariffs.find(
-                      (t) => t.shipmentPointGroup === groupName
-                    );
-                  }
-                  
-                  if (dispatchTariff) {
-                    dispatchFee = dispatchTariff.dispatchFee;
-                  }
-                }
-
-                const totalFbsFee = processingFee + dispatchFee;
+                const fee = dispatchTariff?.dispatchFee ?? 0;
 
                 return (
-                  <div className="border-t pt-3 mt-2 space-y-2">
-                    {dispatchFee > 0 && (
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">
-                          Отправление ({pickupPointType === "pvz-ppz" ? "ПВЗ/ППЗ" : "СЦ"})
-                        </span>
-                        <span>{dispatchFee.toFixed(2)} ₽</span>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">
-                        Обработка ({acceptanceType === "employee" ? "сотрудник Ozon" : acceptanceType === "self" ? "самоприёмка" : "доверительная"})
+                  <div className="flex items-center justify-between bg-purple-50 dark:bg-purple-950/30 text-purple-700 dark:text-purple-300 px-3 py-2 rounded-md">
+                    <div className="flex flex-col">
+                      <span className="text-sm font-medium">Тариф за отправление</span>
+                      <span className="text-xs text-purple-600 dark:text-purple-400">
+                        {groupName} • {methodName}
                       </span>
-                      <span>{processingFee.toFixed(2)} ₽</span>
                     </div>
-                    <div className="flex items-center justify-between text-sm font-bold border-t pt-2">
-                      <span>Итого тариф FBS за отгрузку</span>
-                      <span className="text-lg">{totalFbsFee.toFixed(2)} ₽</span>
+                    <span className="text-lg font-bold">{fee} ₽</span>
+                  </div>
+                );
+              })()}
+
+              {/* Мини-таблица всех тарифов для данного типа точки */}
+              {(() => {
+                const groupName = pickupPointType === "pvz-ppz" ? "ПВЗ/ППЗ" : "СЦ";
+                const methods = [
+                  { key: "standard", label: "Сотрудник" },
+                  { key: "self", label: "Самоприёмка" },
+                  { key: "trust", label: "Доверительная" },
+                ];
+                
+                return (
+                  <div className="text-xs">
+                    <p className="text-muted-foreground font-medium mb-1">Все тарифы для {groupName}:</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {methods.map((m) => {
+                        const tariff = dispatchTariffs.find(
+                          (t) => t.shipmentPointGroup === groupName && t.shipmentMethod === m.key
+                        ) || dispatchTariffs.find(
+                          (t) => t.shipmentPointGroup === groupName && t.shipmentMethod === null
+                        ) || dispatchTariffs.find(
+                          (t) => t.shipmentPointGroup === groupName
+                        );
+                        const isActive = (acceptanceType === m.key) || (!acceptanceType && m.key === "standard");
+                        return (
+                          <div 
+                            key={m.key} 
+                            className={`rounded px-2 py-1 text-center ${isActive ? "bg-purple-100 dark:bg-purple-900/40 font-bold" : "bg-muted/50"}`}
+                          >
+                            <div className="text-muted-foreground">{m.label}</div>
+                            <div className={isActive ? "text-purple-700 dark:text-purple-300" : ""}>{tariff?.dispatchFee ?? "—"} ₽</div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 );
@@ -1230,28 +1084,6 @@ export function OzonSingleProductCalculator() {
                       <td className="text-right py-2.5 px-3 text-muted-foreground">—</td>
                     </tr>
                   )}
-
-                  {/* Обработка FBS */}
-                  <tr className="border-b">
-                    <td className="py-2.5 px-3">
-                      Обработка отправления
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Info className="h-3.5 w-3.5 text-muted-foreground inline ml-1 cursor-help" />
-                          </TooltipTrigger>
-                          <TooltipContent side="right" className="max-w-xs">
-                            <p className="text-xs"><strong>FBS:</strong> {calcResult.fbs.processingDetails}</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    </td>
-                    <td className="text-right py-2.5 px-3 text-muted-foreground">вкл.</td>
-                    <td className="text-right py-2.5 px-3 text-red-500">
-                      {calcResult.fbs.processingFee > 0 ? `−${fmtMoney(calcResult.fbs.processingFee)}` : "—"}
-                    </td>
-                    <td className="text-right py-2.5 px-3 text-muted-foreground">—</td>
-                  </tr>
 
                   {/* Доставка до места выдачи */}
                   <tr className="border-b">

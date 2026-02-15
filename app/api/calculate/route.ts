@@ -237,10 +237,10 @@ export async function POST(request: NextRequest) {
     const fbsShipping = await findShippingCost("fbs");
 
     // ─── 3. ТАРИФ ЗА ОТПРАВЛЕНИЕ FBS ────────────────────────────
-    // Дефолтные тарифы за отправление (если в БД нет данных)
+    // Дефолтные тарифы: { "группа:метод": стоимость }
     const DEFAULT_DISPATCH_FEES: Record<string, number> = {
-      "ПВЗ/ППЗ": 30,
-      "СЦ": 20,
+      "ПВЗ/ППЗ:standard": 30, "ПВЗ/ППЗ:self": 30, "ПВЗ/ППЗ:trust": 30,
+      "СЦ:standard": 20, "СЦ:self": 10, "СЦ:trust": 10,
     };
 
     let fbsDispatchFee = 0;
@@ -248,39 +248,29 @@ export async function POST(request: NextRequest) {
 
     if (pickupPointType) {
       // Определяем способ отгрузки на основе типа приёмки
-      let shipmentMethod: string | null = null;
-      if (pickupPointType === "pvz-ppz") {
-        // Для ПВЗ/ППЗ всегда стандартная отгрузка
-        shipmentMethod = "standard";
-      } else if (pickupPointType === "sc" && acceptanceType) {
-        // Для СЦ зависит от типа приёмки (только если указан)
-        if (acceptanceType === "self") {
-          shipmentMethod = "self"; // Самоприёмка
-        } else if (acceptanceType === "trust") {
-          shipmentMethod = "trust"; // Доверительная приёмка
-        } else if (acceptanceType === "employee") {
-          shipmentMethod = "standard"; // Стандартная отгрузка
-        }
+      let shipmentMethod = "standard"; // По умолчанию — стандартная отгрузка (сотрудник)
+      if (acceptanceType === "self") {
+        shipmentMethod = "self";
+      } else if (acceptanceType === "trust") {
+        shipmentMethod = "trust";
       }
 
-      // Ищем тариф за отправление
       const groupName = pickupPointType === "pvz-ppz" ? "ПВЗ/ППЗ" : "СЦ";
       
-      // Сначала ищем с конкретным shipmentMethod (если указан)
+      // Ищем тариф за отправление в БД
       let dispatchTariff = null;
       try {
-        if (shipmentMethod) {
-          dispatchTariff = await prisma.dispatchTariff.findFirst({
-            where: {
-              marketplace: mkt,
-              shipmentPointGroup: groupName,
-              shipmentMethod: shipmentMethod,
-              isActive: true,
-            },
-          });
-        }
+        // Ищем с конкретным shipmentMethod
+        dispatchTariff = await prisma.dispatchTariff.findFirst({
+          where: {
+            marketplace: mkt,
+            shipmentPointGroup: groupName,
+            shipmentMethod: shipmentMethod,
+            isActive: true,
+          },
+        });
         
-        // Если не найден, ищем с null (для обратной совместимости или общих тарифов)
+        // Если не найден, ищем с null (обратная совместимость)
         if (!dispatchTariff) {
           dispatchTariff = await prisma.dispatchTariff.findFirst({
             where: {
@@ -291,8 +281,8 @@ export async function POST(request: NextRequest) {
             },
           });
         }
-        
-        // Если всё ещё не найден, ищем любой тариф для группы
+
+        // Если не найден, ищем любой тариф для группы
         if (!dispatchTariff) {
           dispatchTariff = await prisma.dispatchTariff.findFirst({
             where: {
@@ -303,70 +293,25 @@ export async function POST(request: NextRequest) {
           });
         }
       } catch (e) {
-        // Таблица может не существовать — используем дефолты
         console.log("⚠️ Таблица DispatchTariff не найдена, используем дефолты");
       }
 
       if (dispatchTariff) {
         fbsDispatchFee = dispatchTariff.dispatchFee;
       } else {
-        // Используем дефолтные значения, если в БД нет данных
-        fbsDispatchFee = DEFAULT_DISPATCH_FEES[groupName] || 0;
+        // Дефолтные значения по группе и методу
+        fbsDispatchFee = DEFAULT_DISPATCH_FEES[`${groupName}:${shipmentMethod}`] || 0;
       }
       
       const methodName = shipmentMethod === "self" ? "Самоприёмка" 
         : shipmentMethod === "trust" ? "Доверительная приёмка"
-        : "Стандартная отгрузка";
-      fbsDispatchDetails = `Отправление (${groupName}${shipmentMethod ? `, ${methodName}` : ""}): ${fbsDispatchFee} ₽`;
+        : "Сотрудник (стандартная отгрузка)";
+      fbsDispatchDetails = `Отправление (${groupName}, ${methodName}): ${fbsDispatchFee} ₽`;
     }
 
-    // ─── 4. ОБРАБОТКА FBS ────────────────────────────────────────
-    let fbsProcessingFee = 0;
-    let fbsProcessingDetails = "";
-
-    if (pickupPointType && acceptanceType) {
-      // Тарифы обработки отправлений исключены из расчёта
-      // Используем только тарифы обработки из таблицы ProcessingTariff
-      
-      // Ищем тарифы обработки в базе данных
-      const processingTariffs = await prisma.processingTariff.findMany({
-        where: { marketplace: mkt, isActive: true },
-      });
-
-      let processingFee = 0;
-
-      if (pickupPointType === "pvz-ppz") {
-        // ПВЗ/ППЗ - берём тариф из таблицы (независимо от типа приёмки)
-        const relevant = processingTariffs.filter((t) => {
-          const pl = t.shipmentPointType.toLowerCase();
-          return pl.includes("пвз") || pl.includes("ппз");
-        });
-        const first = relevant.length > 0 ? relevant[0] : null;
-        // Берём ozonProcessingFee (не важно какой тип приёмки для ПВЗ/ППЗ)
-        processingFee = first?.ozonProcessingFee || 0;
-      } else if (pickupPointType === "sc") {
-        // СЦ - зависит от типа приёмки, но всегда берём из таблицы
-        const relevant = processingTariffs.filter((t) => {
-          const pl = t.shipmentPointType.toLowerCase();
-          return pl.includes("сц");
-        });
-        const first = relevant.length > 0 ? relevant[0] : null;
-        
-        if (first) {
-          // По умолчанию берём полное значение из таблицы (как для employee)
-          if (acceptanceType === "self" || acceptanceType === "trust") {
-            // СЦ + самоприёмка или доверительная - берём тариф из таблицы и делим на 2
-            processingFee = first.ozonProcessingFee / 2;
-          } else {
-            // СЦ + сотрудник или не указан тип - берём тариф из таблицы (ozonProcessingFee)
-            processingFee = first.ozonProcessingFee;
-          }
-        }
-      }
-
-      fbsProcessingFee = processingFee;
-      fbsProcessingDetails = `Обработка: ${processingFee.toFixed(2)} ₽`;
-    }
+    // Обработка FBS исключена из расчёта — тариф за отправление уже включает всё
+    const fbsProcessingFee = 0;
+    const fbsProcessingDetails = "Включено в тариф за отправление";
 
     // ─── 5. ЭКВАЙРИНГ ───────────────────────────────────────────
     let acquiringPct = 0;
@@ -388,9 +333,8 @@ export async function POST(request: NextRequest) {
     const fboProfit = price - fboTotalFees - totalCost;
     const fboMargin = price > 0 ? Math.round(fboProfit / price * 10000) / 100 : 0;
 
-    // FBS
-    // Всегда прибавляем доставку до места выдачи и тариф за отправление к расчёту FBS
-    const fbsTotalFees = fbsCommission + fbsShipping.cost + fbsProcessingFee + fbsDispatchFee + deliveryToPickupPoint + acquiringFee;
+    // FBS (обработка исключена — только отправление)
+    const fbsTotalFees = fbsCommission + fbsShipping.cost + fbsDispatchFee + deliveryToPickupPoint + acquiringFee;
     const fbsProfit = price - fbsTotalFees - totalCost;
     const fbsMargin = price > 0 ? Math.round(fbsProfit / price * 10000) / 100 : 0;
 
