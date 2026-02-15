@@ -63,12 +63,14 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
+        const shipmentMethodValue: string | null = t.shipmentMethod ?? null;
+        
         const res = await prisma.dispatchTariff.upsert({
           where: {
             marketplace_shipmentPointGroup_shipmentMethod: {
               marketplace,
               shipmentPointGroup: t.shipmentPointGroup,
-              shipmentMethod: t.shipmentMethod ?? null,
+              shipmentMethod: shipmentMethodValue,
             },
           },
           update: {
@@ -78,7 +80,7 @@ export async function POST(request: NextRequest) {
           create: {
             marketplace,
             shipmentPointGroup: t.shipmentPointGroup,
-            shipmentMethod: t.shipmentMethod ?? null,
+            shipmentMethod: shipmentMethodValue,
             dispatchFee: t.dispatchFee,
             notes: t.notes ?? null,
           },
