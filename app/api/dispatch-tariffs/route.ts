@@ -63,28 +63,34 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        const shipmentMethodValue: string | null = t.shipmentMethod ?? null;
+        // Для Prisma nullable поля в unique key используем findFirst + update/create
+        const shipmentMethodValue = t.shipmentMethod || null;
         
-        const res = await prisma.dispatchTariff.upsert({
+        const existing = await prisma.dispatchTariff.findFirst({
           where: {
-            marketplace_shipmentPointGroup_shipmentMethod: {
-              marketplace,
-              shipmentPointGroup: t.shipmentPointGroup,
-              shipmentMethod: shipmentMethodValue,
-            },
-          },
-          update: {
-            dispatchFee: t.dispatchFee,
-            notes: t.notes ?? null,
-          },
-          create: {
             marketplace,
             shipmentPointGroup: t.shipmentPointGroup,
             shipmentMethod: shipmentMethodValue,
-            dispatchFee: t.dispatchFee,
-            notes: t.notes ?? null,
           },
         });
+
+        const res = existing
+          ? await prisma.dispatchTariff.update({
+              where: { id: existing.id },
+              data: {
+                dispatchFee: t.dispatchFee,
+                notes: t.notes ?? null,
+              },
+            })
+          : await prisma.dispatchTariff.create({
+              data: {
+                marketplace,
+                shipmentPointGroup: t.shipmentPointGroup,
+                shipmentMethod: shipmentMethodValue,
+                dispatchFee: t.dispatchFee,
+                notes: t.notes ?? null,
+              },
+            });
 
         results.push(res);
       } catch (e: any) {
