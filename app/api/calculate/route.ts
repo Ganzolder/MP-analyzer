@@ -310,7 +310,7 @@ export async function POST(request: NextRequest) {
         // Берём ozonProcessingFee (не важно какой тип приёмки для ПВЗ/ППЗ)
         processingFee = first?.ozonProcessingFee || 0;
       } else if (pickupPointType === "sc") {
-        // СЦ - зависит от типа приёмки
+        // СЦ - зависит от типа приёмки, но всегда берём из таблицы
         const relevant = processingTariffs.filter((t) => {
           const pl = t.shipmentPointType.toLowerCase();
           return pl.includes("сц");
@@ -318,12 +318,13 @@ export async function POST(request: NextRequest) {
         const first = relevant.length > 0 ? relevant[0] : null;
         
         if (first) {
-          if (acceptanceType === "employee") {
-            // СЦ + сотрудник - берём тариф из таблицы (ozonProcessingFee)
-            processingFee = first.ozonProcessingFee;
-          } else if (acceptanceType === "self" || acceptanceType === "trust") {
+          // По умолчанию берём полное значение из таблицы (как для employee)
+          if (acceptanceType === "self" || acceptanceType === "trust") {
             // СЦ + самоприёмка или доверительная - берём тариф из таблицы и делим на 2
             processingFee = first.ozonProcessingFee / 2;
+          } else {
+            // СЦ + сотрудник или не указан тип - берём тариф из таблицы (ozonProcessingFee)
+            processingFee = first.ozonProcessingFee;
           }
         }
       }

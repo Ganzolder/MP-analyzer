@@ -940,13 +940,14 @@ export function OzonSingleProductCalculator() {
                     // ПВЗ/ППЗ - берём тариф из таблицы (независимо от типа приёмки)
                     processingFee = firstProcessing.ozonProcessingFee;
                   } else {
-                    // СЦ - зависит от типа приёмки
-                    if (acceptanceType === "employee") {
-                      // СЦ + сотрудник - берём тариф из таблицы
-                      processingFee = firstProcessing.ozonProcessingFee;
-                    } else if (acceptanceType === "self" || acceptanceType === "trust") {
+                    // СЦ - зависит от типа приёмки, но всегда берём из таблицы
+                    // По умолчанию берём полное значение из таблицы (как для employee)
+                    if (acceptanceType === "self" || acceptanceType === "trust") {
                       // СЦ + самоприёмка или доверительная - берём тариф из таблицы и делим на 2
                       processingFee = firstProcessing.ozonProcessingFee / 2;
+                    } else {
+                      // СЦ + сотрудник или не указан тип - берём тариф из таблицы
+                      processingFee = firstProcessing.ozonProcessingFee;
                     }
                   }
                 }
