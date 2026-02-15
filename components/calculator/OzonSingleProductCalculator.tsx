@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Info, Calculator, TrendingUp, TrendingDown } from "lucide-react";
+import { Info, Calculator, TrendingUp, TrendingDown, Target } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +28,13 @@ interface FulfillmentResult {
   margin: number;
 }
 
+interface ReverseCalcResult {
+  targetMargin: number;
+  fbo: { requiredPrice: number; currentMarginFromCost: number };
+  fbs: { requiredPrice: number; currentMarginFromCost: number };
+  rfbs: { requiredPrice: number; currentMarginFromCost: number };
+}
+
 interface CalcResult {
   price: number;
   volumeLiters: number;
@@ -45,6 +52,7 @@ interface CalcResult {
   fbo: FulfillmentResult;
   fbs: FulfillmentResult;
   rfbs: FulfillmentResult;
+  reverseCalculation?: ReverseCalcResult | null;
 }
 
 interface CategoryOption {
@@ -61,7 +69,7 @@ interface SearchResult {
 
 interface DispatchTariff {
   shipmentPointGroup: string;
-  shipmentMethod: string | null; // self, trust, standard, или null (для обратной совместимости)
+  shipmentMethod: string | null;
   dispatchFee: number;
 }
 
@@ -110,12 +118,15 @@ export function OzonSingleProductCalculator() {
   const [shipmentMethod, setShipmentMethod] = useState<"pickup" | "courier">("pickup");
   const [pickupPointType, setPickupPointType] = useState<string>("");
   const [acceptanceType, setAcceptanceType] = useState<string>("");
-  const [deliveryToPickupPoint, setDeliveryToPickupPoint] = useState<string>("25"); // Доставка до места выдачи
+  const [deliveryToPickupPoint, setDeliveryToPickupPoint] = useState<string>("25");
 
   // Себестоимость
   const [costMode, setCostMode] = useState<"single" | "batch">("single");
   const [productCost, setProductCost] = useState<string>("");
   const [otherExpenses, setOtherExpenses] = useState<string>("");
+
+  // Желаемая маржинальность (опциональное поле)
+  const [targetMargin, setTargetMargin] = useState<string>("");
 
   // Поиск категорий
   const [categoryOptions, setCategoryOptions] = useState<CategoryOption[]>([]);
@@ -128,11 +139,6 @@ export function OzonSingleProductCalculator() {
 
   // Тарифы за отправление
   const [dispatchTariffs, setDispatchTariffs] = useState<DispatchTariff[]>([]);
-
-  // Режим расчёта
-  const [calcMode, setCalcMode] = useState<"price" | "margin">("price");
-  const [targetMargin, setTargetMargin] = useState<string>("");
-  const [targetFulfillmentType, setTargetFulfillmentType] = useState<"fbo" | "fbs" | "rfbs">("fbs");
 
   // Результаты расчёта
   const [calcResult, setCalcResult] = useState<CalcResult | null>(null);
@@ -162,7 +168,6 @@ export function OzonSingleProductCalculator() {
           }));
           setCategoryOptions(options);
 
-          // Автоматически выбираем первый результат, если ещё ничего не выбрано
           if (!category && options.length > 0) {
             setCategory(options[0].value);
           }
@@ -177,7 +182,6 @@ export function OzonSingleProductCalculator() {
       }
     };
 
-    // Debounce поиска
     const timeoutId = setTimeout(() => {
       searchCategories();
     }, 300);
@@ -185,7 +189,7 @@ export function OzonSingleProductCalculator() {
     return () => clearTimeout(timeoutId);
   }, [productName, category]);
 
-  // Дефолтные тарифы за отправление (если в БД нет данных)
+  // Дефолтные тарифы за отправление
   const DEFAULT_DISPATCH_TARIFFS: DispatchTariff[] = [
     { shipmentPointGroup: "ПВЗ/ППЗ", shipmentMethod: "standard", dispatchFee: 30 },
     { shipmentPointGroup: "ПВЗ/ППЗ", shipmentMethod: "self", dispatchFee: 30 },
@@ -222,7 +226,6 @@ export function OzonSingleProductCalculator() {
         return;
       }
 
-      // Парсим value формата "productType:Шины" или "category:Автотовары"
       const colonIdx = category.indexOf(":");
       if (colonIdx === -1) return;
 
@@ -262,7 +265,6 @@ export function OzonSingleProductCalculator() {
     let fbs: number | null = null;
 
     if (isNaN(priceNum) || priceNum <= 0) {
-      // Нет цены — показываем первый ценовой диапазон
       fbo = rates.fbo.upTo100;
       fbs = rates.fbs.upTo100;
     } else if (priceNum <= 100) {
@@ -294,7 +296,7 @@ export function OzonSingleProductCalculator() {
       const w = parseFloat(width.replace(",", "."));
       const h = parseFloat(height.replace(",", "."));
       if (!isNaN(l) && !isNaN(w) && !isNaN(h)) {
-        const vol = (l * w * h) / 1000; // см³ в литры
+        const vol = (l * w * h) / 1000;
         setCalculatedVolume(vol);
       } else {
         setCalculatedVolume(null);
@@ -304,13 +306,11 @@ export function OzonSingleProductCalculator() {
     }
   }, [dimensionMode, length, width, height]);
 
-  // Форматирование процента — округление до целых (44.999999 → 45)
   const fmtPct = (v: number | null): string => {
     if (v === null || v === undefined) return "—";
     return `${Math.round(v)}%`;
   };
 
-  // Форматирование числа с пробелами для тысяч
   const formatNumber = (value: string): string => {
     if (!value) return "";
     const num = parseFloat(value.replace(/\s/g, ""));
@@ -318,19 +318,16 @@ export function OzonSingleProductCalculator() {
     return num.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
   };
 
-  // Обработчик изменения цены с форматированием
   const handlePriceChange = (value: string) => {
     const cleaned = value.replace(/\s/g, "");
     setPrice(cleaned);
   };
 
-  // Обработчик изменения себестоимости с форматированием
   const handleProductCostChange = (value: string) => {
     const cleaned = value.replace(/\s/g, "");
     setProductCost(cleaned);
   };
 
-  // Расчёт объёма в литрах
   const getVolumeLiters = (): number => {
     if (dimensionMode === "volume" && volume) {
       return parseFloat(volume.replace(",", ".")) || 0;
@@ -349,7 +346,12 @@ export function OzonSingleProductCalculator() {
       return;
     }
 
-    // Определяем тип и значение категории из selected value
+    const priceNum = parseFloat(price.replace(/\s/g, ""));
+    if (!priceNum || priceNum <= 0) {
+      setCalcError("Укажите цену товара");
+      return;
+    }
+
     let catType = "";
     let catValue = "";
     if (category) {
@@ -369,6 +371,7 @@ export function OzonSingleProductCalculator() {
         marketplace: "ozon",
         categoryType: catType || undefined,
         categoryValue: catValue || undefined,
+        price: priceNum,
         volumeLiters: vol,
         pickupPointType: pickupPointType || undefined,
         acceptanceType: acceptanceType || undefined,
@@ -377,25 +380,10 @@ export function OzonSingleProductCalculator() {
         otherExpenses: parseFloat(otherExpenses) || 0,
       };
 
-      // Если режим обратного расчёта
-      if (calcMode === "margin") {
-        const marginNum = parseFloat(targetMargin.replace(/\s/g, ""));
-        if (isNaN(marginNum) || marginNum < 0 || marginNum > 1000) {
-          setCalcError("Укажите корректную маржинальность (0-1000%)");
-          setIsCalculating(false);
-          return;
-        }
+      // Если указана желаемая маржинальность — добавляем
+      const marginNum = parseFloat(targetMargin.replace(/\s/g, ""));
+      if (!isNaN(marginNum) && marginNum >= 0) {
         requestBody.targetMargin = marginNum;
-        requestBody.fulfillmentType = targetFulfillmentType;
-      } else {
-        // Обычный расчёт по цене
-        const priceNum = parseFloat(price.replace(/\s/g, ""));
-        if (!priceNum || priceNum <= 0) {
-          setCalcError("Укажите цену товара");
-          setIsCalculating(false);
-          return;
-        }
-        requestBody.price = priceNum;
       }
 
       const response = await fetch("/api/calculate", {
@@ -407,10 +395,6 @@ export function OzonSingleProductCalculator() {
       const data = await response.json();
       if (data.success && data.data) {
         setCalcResult(data.data);
-        // Если был обратный расчёт, обновляем цену в поле
-        if (calcMode === "margin" && data.data.price) {
-          setPrice(data.data.price.toFixed(2));
-        }
       } else {
         setCalcError(data.error || "Ошибка расчёта");
       }
@@ -422,7 +406,6 @@ export function OzonSingleProductCalculator() {
     }
   };
 
-  // Форматирование денег
   const fmtMoney = (v: number): string => {
     return v.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " ₽";
   };
@@ -545,7 +528,6 @@ export function OzonSingleProductCalculator() {
                 )}
               </div>
 
-              {/* Активная комиссия по текущей цене */}
               {price && parseFloat(price.replace(/\s/g, "")) > 0 && (
                 <div className="flex gap-3 flex-wrap">
                   {activeCommission.fbo !== null && (
@@ -594,7 +576,6 @@ export function OzonSingleProductCalculator() {
                     ].map((row, idx) => {
                       const priceNum = parseFloat(price.replace(/\s/g, ""));
                       const isActive = !isNaN(priceNum) && priceNum > 0 && priceNum > row.priceRange[0] && priceNum <= row.priceRange[1];
-                      // Исключение: для первого диапазона 0-100
                       const isActiveFirst = idx === 0 && !isNaN(priceNum) && priceNum > 0 && priceNum <= 100;
                       const highlighted = isActive || isActiveFirst;
 
@@ -624,87 +605,17 @@ export function OzonSingleProductCalculator() {
             </div>
           )}
 
-          {/* Режим расчёта */}
-          <div className="space-y-3">
-            <Label>Режим расчёта</Label>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant={calcMode === "price" ? "default" : "outline"}
-                onClick={() => setCalcMode("price")}
-                className="flex-1"
-              >
-                По цене
-              </Button>
-              <Button
-                type="button"
-                variant={calcMode === "margin" ? "default" : "outline"}
-                onClick={() => setCalcMode("margin")}
-                className="flex-1"
-              >
-                По марже
-              </Button>
-            </div>
-            {calcMode === "margin" && (
-              <div className="grid grid-cols-2 gap-4 pt-2">
-                <div className="space-y-2">
-                  <Label htmlFor="targetMargin">Желаемая маржинальность, %</Label>
-                  <Input
-                    id="targetMargin"
-                    type="text"
-                    value={targetMargin ? formatNumber(targetMargin) : ""}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/\s/g, "");
-                      if (val === "" || /^\d*\.?\d*$/.test(val)) {
-                        setTargetMargin(val);
-                      }
-                    }}
-                    placeholder="30"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Маржинальность от себестоимости (0-1000%)
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="targetFulfillmentType">Тип отгрузки</Label>
-                  <Select
-                    value={targetFulfillmentType}
-                    onValueChange={(v) => setTargetFulfillmentType(v as "fbo" | "fbs" | "rfbs")}
-                  >
-                    <SelectTrigger id="targetFulfillmentType">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="fbo">FBO</SelectItem>
-                      <SelectItem value="fbs">FBS</SelectItem>
-                      <SelectItem value="rfbs">RFBS</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            )}
-          </div>
-
           {/* Цена и вес */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="price">
-                {calcMode === "margin" ? "Рассчитанная цена, ₽" : "Цена, ₽"}
-              </Label>
+              <Label htmlFor="price">Цена, ₽</Label>
               <Input
                 id="price"
                 type="text"
                 value={price ? formatNumber(price) : ""}
                 onChange={(e) => handlePriceChange(e.target.value)}
                 placeholder="0"
-                disabled={calcMode === "margin"}
-                className={calcMode === "margin" ? "bg-muted" : ""}
               />
-              {calcMode === "margin" && (
-                <p className="text-xs text-muted-foreground">
-                  Цена будет рассчитана автоматически
-                </p>
-              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="weight">Вес, кг</Label>
@@ -915,14 +826,12 @@ export function OzonSingleProductCalculator() {
               {(() => {
                 const groupName = pickupPointType === "pvz-ppz" ? "ПВЗ/ППЗ" : "СЦ";
                 
-                // Определяем способ отгрузки
-                let shipmentMethod = "standard"; // По умолчанию — сотрудник
-                if (acceptanceType === "self") shipmentMethod = "self";
-                else if (acceptanceType === "trust") shipmentMethod = "trust";
+                let sm = "standard";
+                if (acceptanceType === "self") sm = "self";
+                else if (acceptanceType === "trust") sm = "trust";
                 
-                // Ищем тариф: точное совпадение → null → любой для группы
                 const dispatchTariff = dispatchTariffs.find(
-                  (t) => t.shipmentPointGroup === groupName && t.shipmentMethod === shipmentMethod
+                  (t) => t.shipmentPointGroup === groupName && t.shipmentMethod === sm
                 ) || dispatchTariffs.find(
                   (t) => t.shipmentPointGroup === groupName && t.shipmentMethod === null
                 ) || dispatchTariffs.find(
@@ -989,10 +898,10 @@ export function OzonSingleProductCalculator() {
         </CardContent>
       </Card>
 
-      {/* Себестоимость */}
+      {/* Себестоимость и маржинальность */}
       <Card>
         <CardHeader>
-          <CardTitle>Себестоимость</CardTitle>
+          <CardTitle>Себестоимость и маржинальность</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <Tabs value={costMode} onValueChange={(v) => setCostMode(v as "single" | "batch")}>
@@ -1054,6 +963,45 @@ export function OzonSingleProductCalculator() {
               </div>
             </TabsContent>
           </Tabs>
+
+          {/* Желаемая маржинальность */}
+          <div className="rounded-lg border bg-amber-50/50 dark:bg-amber-950/20 p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <Target className="h-4 w-4 text-amber-600" />
+              <Label htmlFor="targetMargin" className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                Желаемая маржинальность от себестоимости, %
+              </Label>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Info className="h-4 w-4 text-muted-foreground cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    <p>
+                      Если заполнено — калькулятор покажет рекомендуемую цену для каждого типа
+                      отгрузки, при которой ваша маржа от себестоимости будет равна указанному %.
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+            <Input
+              id="targetMargin"
+              type="text"
+              value={targetMargin ? formatNumber(targetMargin) : ""}
+              onChange={(e) => {
+                const val = e.target.value.replace(/\s/g, "");
+                if (val === "" || /^\d*\.?\d*$/.test(val)) {
+                  setTargetMargin(val);
+                }
+              }}
+              placeholder="Например: 30"
+              className="bg-white dark:bg-background"
+            />
+            <p className="text-xs text-muted-foreground">
+              Необязательное поле. Если указано — в результатах появится строка с рекомендуемой ценой.
+            </p>
+          </div>
         </CardContent>
       </Card>
 
@@ -1159,7 +1107,7 @@ export function OzonSingleProductCalculator() {
                   </tr>
 
                   {/* Тариф за отправление FBS */}
-                  {calcResult.fbs.dispatchFee && calcResult.fbs.dispatchFee > 0 && (
+                  {calcResult.fbs.dispatchFee !== undefined && calcResult.fbs.dispatchFee > 0 && (
                     <tr className="border-b">
                       <td className="py-2.5 px-3">
                         Тариф за отправление
@@ -1238,7 +1186,7 @@ export function OzonSingleProductCalculator() {
                   </tr>
 
                   {/* Маржинальность */}
-                  <tr>
+                  <tr className="border-t">
                     <td className="py-3 px-3 font-medium">Маржинальность</td>
                     <td className="text-right py-3 px-3">
                       <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
@@ -1277,6 +1225,73 @@ export function OzonSingleProductCalculator() {
                       </div>
                     </td>
                   </tr>
+
+                  {/* Маржинальность от себестоимости (если есть обратный расчёт) */}
+                  {calcResult.reverseCalculation && (
+                    <tr className="border-t">
+                      <td className="py-3 px-3 font-medium">
+                        Маржа от себестоимости
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Info className="h-3.5 w-3.5 text-muted-foreground inline ml-1 cursor-help" />
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-xs">
+                              <p className="text-xs">
+                                Прибыль / Себестоимость × 100%. 
+                                Показывает, какой процент от себестоимости составляет ваша прибыль.
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </td>
+                      <td className="text-right py-3 px-3">
+                        <span className={`font-bold ${calcResult.reverseCalculation.fbo.currentMarginFromCost >= 0 ? "text-green-600" : "text-red-600"}`}>
+                          {calcResult.reverseCalculation.fbo.currentMarginFromCost}%
+                        </span>
+                      </td>
+                      <td className="text-right py-3 px-3">
+                        <span className={`font-bold ${calcResult.reverseCalculation.fbs.currentMarginFromCost >= 0 ? "text-green-600" : "text-red-600"}`}>
+                          {calcResult.reverseCalculation.fbs.currentMarginFromCost}%
+                        </span>
+                      </td>
+                      <td className="text-right py-3 px-3">
+                        <span className={`font-bold ${calcResult.reverseCalculation.rfbs.currentMarginFromCost >= 0 ? "text-green-600" : "text-red-600"}`}>
+                          {calcResult.reverseCalculation.rfbs.currentMarginFromCost}%
+                        </span>
+                      </td>
+                    </tr>
+                  )}
+
+                  {/* Рекомендуемая цена (обратный расчёт) */}
+                  {calcResult.reverseCalculation && (
+                    <tr className="border-t-2 bg-amber-50/50 dark:bg-amber-950/20">
+                      <td className="py-3 px-3 font-bold text-amber-800 dark:text-amber-300">
+                        <div className="flex items-center gap-1.5">
+                          <Target className="h-4 w-4" />
+                          Цена при марже {calcResult.reverseCalculation.targetMargin}%
+                        </div>
+                        <span className="text-xs font-normal text-muted-foreground">
+                          от себестоимости
+                        </span>
+                      </td>
+                      <td className="text-right py-3 px-3">
+                        <span className="font-bold text-amber-700 dark:text-amber-400 text-base">
+                          {fmtMoney(calcResult.reverseCalculation.fbo.requiredPrice)}
+                        </span>
+                      </td>
+                      <td className="text-right py-3 px-3">
+                        <span className="font-bold text-amber-700 dark:text-amber-400 text-base">
+                          {fmtMoney(calcResult.reverseCalculation.fbs.requiredPrice)}
+                        </span>
+                      </td>
+                      <td className="text-right py-3 px-3">
+                        <span className="font-bold text-amber-700 dark:text-amber-400 text-base">
+                          {fmtMoney(calcResult.reverseCalculation.rfbs.requiredPrice)}
+                        </span>
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
