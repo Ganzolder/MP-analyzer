@@ -10,14 +10,15 @@ import type { OzonProductData, ParsedFileResult } from "@/lib/types/calculator";
  */
 const REQUIRED_COLUMNS = {
   category: ["категория товара", "категория", "category"],
-  article: ["артикул", "article", "артикул товара"],
+  article: ["артикул", "article", "артикул товара", "sku"],
   name: ["наименование", "name", "название", "название товара"],
-  cost: ["себестоимость", "cost", "себестоимость руб", "себестоимость, руб"],
-  marginPercent: ["маржинальность в %", "маржинальность", "margin", "margin %", "маржинальность, %"],
-  width: ["ширина в мм", "ширина", "width", "ширина, мм"],
-  height: ["высота в мм", "высота", "height", "высота, мм"],
-  length: ["длина в мм", "длина", "length", "длина, мм"],
+  cost: ["себестоимость", "cost", "себестоимость руб", "себестоимость, руб", "закуп", "закупочная цена", "закупка"],
+  marginPercent: ["маржинальность в %", "маржинальность", "margin", "margin %", "маржинальность, %", "маржа", "маржа %", "маржа, %"],
+  width: ["ширина в мм", "ширина", "width", "ширина, мм", "ширина мм"],
+  height: ["высота в мм", "высота", "height", "высота, мм", "высота мм"],
+  length: ["длина в мм", "длина", "length", "длина, мм", "длина мм"],
   weight: ["вес в граммах", "вес", "weight", "вес, г", "вес, грамм"],
+  volume: ["объём", "объем", "volume", "объём, л", "объем, л", "объём л", "объем л"],
 };
 
 /**
@@ -82,6 +83,7 @@ function parseString(value: any): string {
 
 /**
  * Парсит файл Excel для калькулятора Озона
+ * Поддерживает как габариты (ширина/высота/длина в мм), так и прямой объём (л)
  */
 export async function parseOzonFile(file: File): Promise<ParsedFileResult> {
   const products: OzonProductData[] = [];
@@ -121,16 +123,23 @@ export async function parseOzonFile(file: File): Promise<ParsedFileResult> {
     const heightIdx = findColumnIndex(headers, REQUIRED_COLUMNS.height);
     const lengthIdx = findColumnIndex(headers, REQUIRED_COLUMNS.length);
     const weightIdx = findColumnIndex(headers, REQUIRED_COLUMNS.weight);
+    const volumeIdx = findColumnIndex(headers, REQUIRED_COLUMNS.volume);
+
+    // Определяем, есть ли габариты или объём
+    const hasDimensions = widthIdx !== -1 && heightIdx !== -1 && lengthIdx !== -1;
+    const hasVolume = volumeIdx !== -1;
 
     // Проверяем обязательные колонки
     const missingColumns: string[] = [];
     if (categoryIdx === -1) missingColumns.push("Категория товара");
     if (articleIdx === -1) missingColumns.push("Артикул");
     if (nameIdx === -1) missingColumns.push("Наименование");
-    if (costIdx === -1) missingColumns.push("Себестоимость");
-    if (widthIdx === -1) missingColumns.push("Ширина в мм");
-    if (heightIdx === -1) missingColumns.push("Высота в мм");
-    if (lengthIdx === -1) missingColumns.push("Длина в мм");
+    if (costIdx === -1) missingColumns.push("Себестоимость / Закуп");
+
+    // Нужны либо габариты, либо объём
+    if (!hasDimensions && !hasVolume) {
+      missingColumns.push("Габариты (Ширина/Высота/Длина) или Объём");
+    }
 
     if (missingColumns.length > 0) {
       return {
@@ -155,10 +164,11 @@ export async function parseOzonFile(file: File): Promise<ParsedFileResult> {
       const name = parseString(row[nameIdx]);
       const cost = parseNumber(row[costIdx]);
       const marginPercent = marginIdx !== -1 ? parseNumber(row[marginIdx]) : null;
-      const width = parseNumber(row[widthIdx]);
-      const height = parseNumber(row[heightIdx]);
-      const length = parseNumber(row[lengthIdx]);
+      const width = widthIdx !== -1 ? parseNumber(row[widthIdx]) : null;
+      const height = heightIdx !== -1 ? parseNumber(row[heightIdx]) : null;
+      const length = lengthIdx !== -1 ? parseNumber(row[lengthIdx]) : null;
       const weight = weightIdx !== -1 ? parseNumber(row[weightIdx]) : null;
+      const directVolume = volumeIdx !== -1 ? parseNumber(row[volumeIdx]) : null;
 
       // Валидация обязательных полей
       const rowErrors: string[] = [];
@@ -175,14 +185,22 @@ export async function parseOzonFile(file: File): Promise<ParsedFileResult> {
       if (cost === null || cost === undefined) {
         rowErrors.push(`Строка ${rowNum}: отсутствует или неверная себестоимость`);
       }
-      if (width === null || width === undefined || width <= 0) {
-        rowErrors.push(`Строка ${rowNum}: отсутствует или неверная ширина`);
+
+      // Проверяем, можем ли рассчитать объём
+      let volumeLiters: number | null = null;
+
+      if (directVolume !== null && directVolume > 0) {
+        // Прямой объём имеет приоритет
+        volumeLiters = directVolume;
+      } else if (width !== null && height !== null && length !== null && width > 0 && height > 0 && length > 0) {
+        // Рассчитываем из габаритов (мм → литры)
+        // volume_mm3 = width * height * length
+        // volume_liters = volume_mm3 / 1_000_000
+        volumeLiters = (width * height * length) / 1_000_000;
       }
-      if (height === null || height === undefined || height <= 0) {
-        rowErrors.push(`Строка ${rowNum}: отсутствует или неверная высота`);
-      }
-      if (length === null || length === undefined || length <= 0) {
-        rowErrors.push(`Строка ${rowNum}: отсутствует или неверная длина`);
+
+      if (volumeLiters === null || volumeLiters <= 0) {
+        rowErrors.push(`Строка ${rowNum}: не удалось определить объём (укажите габариты или объём напрямую)`);
       }
 
       if (rowErrors.length > 0) {
@@ -202,10 +220,11 @@ export async function parseOzonFile(file: File): Promise<ParsedFileResult> {
         name,
         cost: cost!,
         marginPercent: marginPercent !== null ? marginPercent : undefined,
-        width: width!,
-        height: height!,
-        length: length!,
+        width: width ?? 0,
+        height: height ?? 0,
+        length: length ?? 0,
         weight: weight !== null ? weight : undefined,
+        volumeLiters: volumeLiters!,
       };
 
       products.push(product);

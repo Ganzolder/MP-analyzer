@@ -13,10 +13,11 @@ export interface OzonProductData {
   name: string;                  // Наименование (обязательное)
   cost: number;                  // Себестоимость (обязательное)
   marginPercent?: number;        // Маржинальность в % (необязательное)
-  width: number;                // Ширина в мм (обязательное)
-  height: number;               // Высота в мм (обязательное)
-  length: number;               // Длина в мм (обязательное)
-  weight?: number;              // Вес в граммах (необязательное)
+  width: number;                 // Ширина в мм (0 если не указано)
+  height: number;                // Высота в мм (0 если не указано)
+  length: number;                // Длина в мм (0 если не указано)
+  weight?: number;               // Вес в граммах (необязательное)
+  volumeLiters: number;          // Объём в литрах (расчётный или прямой)
 }
 
 /**
@@ -51,6 +52,38 @@ export interface OzonCalculatorSettings {
 export interface CalculatorState {
   marketplace: Marketplace;
   ozon: OzonCalculatorSettings;
-  // wildberries: WildberriesCalculatorSettings; // Будет добавлено позже
-  // yandexMarket: YandexMarketCalculatorSettings; // Будет добавлено позже
+}
+
+// ─── Типы массового расчёта ────────────────────────────────────
+
+/**
+ * Результат расчёта для одного типа отгрузки (массовый расчёт)
+ */
+export interface BulkCalcFulfillment {
+  recommendedPrice: number;
+  commissionPct: number;
+  commissionAmount: number;
+  shippingCost: number;
+  dispatchFee: number;
+  deliveryToPickup: number;
+  acquiringFee: number;
+  totalFees: number;
+  profit: number;
+  marginPct: number; // от цены продажи
+}
+
+/**
+ * Полный результат расчёта одного товара (массовый расчёт)
+ */
+export interface BulkCalcResult {
+  article: string;
+  name: string;
+  category: string;
+  cost: number;
+  volumeLiters: number;
+  targetMargin: number;
+  fbo: BulkCalcFulfillment;
+  fbs: BulkCalcFulfillment;
+  rfbs: BulkCalcFulfillment;
+  error?: string;
 }
