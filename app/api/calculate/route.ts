@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
       // Параметры товара
       categoryType, // "productType" | "category"
       categoryValue, // значение (например "Шины для легковых автомобилей")
-      price, // Цена товара, ₽
+      price, // Цена товара, ₽ (не требуется при обратном расчёте)
       volumeLiters, // Объём товара в литрах
       // Параметры отгрузки FBS
       pickupPointType, // "pvz-ppz" | "sc"
@@ -23,11 +23,45 @@ export async function POST(request: NextRequest) {
       // Себестоимость
       productCost = 0, // Себестоимость товара, ₽
       otherExpenses = 0, // Прочие затраты, ₽
+      // Обратный расчёт
+      targetMargin, // Желаемая маржинальность от себестоимости (%)
+      fulfillmentType, // "fbo" | "fbs" | "rfbs" - для какого типа считать
     } = body;
 
+    // Если указана целевая маржинальность, выполняем обратный расчёт
+    if (targetMargin !== undefined && targetMargin !== null) {
+      if (!fulfillmentType || !["fbo", "fbs", "rfbs"].includes(fulfillmentType)) {
+        return NextResponse.json(
+          { success: false, error: "Укажите тип отгрузки (fbo/fbs/rfbs) для расчёта цены по марже" },
+          { status: 400 }
+        );
+      }
+      if (productCost <= 0 && otherExpenses <= 0) {
+        return NextResponse.json(
+          { success: false, error: "Укажите себестоимость для расчёта цены по марже" },
+          { status: 400 }
+        );
+      }
+      // Выполняем обратный расчёт
+      return await calculatePriceByMargin({
+        marketplace: marketplace.toLowerCase(),
+        categoryType,
+        categoryValue,
+        volumeLiters,
+        pickupPointType,
+        acceptanceType,
+        deliveryToPickupPoint,
+        productCost,
+        otherExpenses,
+        targetMargin,
+        fulfillmentType,
+      });
+    }
+
+    // Обычный расчёт по цене
     if (!price || price <= 0) {
       return NextResponse.json(
-        { success: false, error: "Укажите цену товара" },
+        { success: false, error: "Укажите цену товара или целевую маржинальность" },
         { status: 400 }
       );
     }
@@ -407,4 +441,144 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+/**
+ * Обратный расчёт: находит цену по заданной маржинальности от себестоимости
+ */
+async function calculatePriceByMargin(params: {
+  marketplace: string;
+  categoryType?: string;
+  categoryValue?: string;
+  volumeLiters: number;
+  pickupPointType?: string;
+  acceptanceType?: string;
+  deliveryToPickupPoint: number;
+  productCost: number;
+  otherExpenses: number;
+  targetMargin: number; // % от себестоимости
+  fulfillmentType: "fbo" | "fbs" | "rfbs";
+}): Promise<NextResponse> {
+  const {
+    marketplace: mkt,
+    categoryType,
+    categoryValue,
+    volumeLiters,
+    pickupPointType,
+    acceptanceType,
+    deliveryToPickupPoint,
+    productCost,
+    otherExpenses,
+    targetMargin,
+    fulfillmentType,
+  } = params;
+
+  const totalCost = productCost + otherExpenses;
+  if (totalCost <= 0) {
+    return NextResponse.json(
+      { success: false, error: "Себестоимость должна быть больше 0" },
+      { status: 400 }
+    );
+  }
+
+  // Итеративный алгоритм поиска цены
+  // Начинаем с приблизительной цены: себестоимость * (1 + маржа/100) + примерные fees
+  let price = totalCost * (1 + targetMargin / 100) * 1.3; // Начальное приближение с запасом
+  const maxIterations = 100;
+  const tolerance = 0.01; // Точность 0.01%
+
+  for (let i = 0; i < maxIterations; i++) {
+    // Выполняем полный расчёт для текущей цены через внутренний вызов POST
+    const mockRequest = {
+      json: async () => ({
+        marketplace: mkt,
+        categoryType,
+        categoryValue,
+        price,
+        volumeLiters,
+        pickupPointType,
+        acceptanceType,
+        deliveryToPickupPoint,
+        productCost,
+        otherExpenses,
+      }),
+    } as any;
+
+    // Временно сохраняем оригинальный request и создаём новый
+    const originalRequest = new NextRequest("http://localhost", { method: "POST" });
+    
+    // Вызываем POST с модифицированными параметрами
+    // Для этого создадим внутренний вызов
+    try {
+      // Создаём запрос с нужными параметрами
+      const url = new URL("http://localhost/api/calculate");
+      const request = new NextRequest(url, {
+        method: "POST",
+        body: JSON.stringify({
+          marketplace: mkt,
+          categoryType,
+          categoryValue,
+          price,
+          volumeLiters,
+          pickupPointType,
+          acceptanceType,
+          deliveryToPickupPoint,
+          productCost,
+          otherExpenses,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+      if (!data.success) {
+        return NextResponse.json(
+          { success: false, error: data.error || "Ошибка при расчёте" },
+          { status: 500 }
+        );
+      }
+
+      const result = data.data;
+      const totalFees = result[fulfillmentType].totalFees;
+      const profit = price - totalFees - totalCost;
+      const actualMargin = totalCost > 0 ? (profit / totalCost) * 100 : 0;
+
+      // Проверяем точность
+      const marginDiff = Math.abs(actualMargin - targetMargin);
+      if (marginDiff < tolerance) {
+        // Нашли нужную цену, возвращаем полный расчёт
+        return response;
+      }
+
+      // Корректируем цену методом бисекции
+      // Если маржа меньше целевой, увеличиваем цену
+      // Если маржа больше целевой, уменьшаем цену
+      if (actualMargin < targetMargin) {
+        price = price * (1 + (targetMargin - actualMargin) / 100 + 0.05); // Добавляем небольшой запас
+      } else {
+        price = price * (1 - (actualMargin - targetMargin) / 100 - 0.02); // Уменьшаем с небольшим запасом
+      }
+      
+      // Защита от отрицательных или слишком больших цен
+      if (price <= totalCost) {
+        price = totalCost * 1.01;
+      }
+      if (price > totalCost * 200) {
+        return NextResponse.json(
+          { success: false, error: `Невозможно достичь маржинальность ${targetMargin}% при данных параметрах` },
+          { status: 400 }
+        );
+      }
+    } catch (error: any) {
+      return NextResponse.json(
+        { success: false, error: error.message || "Ошибка при обратном расчёте" },
+        { status: 500 }
+      );
+    }
+  }
+
+  return NextResponse.json(
+    { success: false, error: "Не удалось найти цену за максимальное количество итераций" },
+    { status: 500 }
+  );
 }

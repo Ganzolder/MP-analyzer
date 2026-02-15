@@ -129,6 +129,11 @@ export function OzonSingleProductCalculator() {
   // Тарифы за отправление
   const [dispatchTariffs, setDispatchTariffs] = useState<DispatchTariff[]>([]);
 
+  // Режим расчёта
+  const [calcMode, setCalcMode] = useState<"price" | "margin">("price");
+  const [targetMargin, setTargetMargin] = useState<string>("");
+  const [targetFulfillmentType, setTargetFulfillmentType] = useState<"fbo" | "fbs" | "rfbs">("fbs");
+
   // Результаты расчёта
   const [calcResult, setCalcResult] = useState<CalcResult | null>(null);
   const [isCalculating, setIsCalculating] = useState(false);
@@ -338,12 +343,6 @@ export function OzonSingleProductCalculator() {
 
   // Основная функция расчёта
   const handleCalculate = async () => {
-    const priceNum = parseFloat(price.replace(/\s/g, ""));
-    if (!priceNum || priceNum <= 0) {
-      setCalcError("Укажите цену товара");
-      return;
-    }
-
     const vol = getVolumeLiters();
     if (vol <= 0) {
       setCalcError("Укажите объём или габариты товара");
@@ -366,26 +365,52 @@ export function OzonSingleProductCalculator() {
     setCalcResult(null);
 
     try {
+      const requestBody: any = {
+        marketplace: "ozon",
+        categoryType: catType || undefined,
+        categoryValue: catValue || undefined,
+        volumeLiters: vol,
+        pickupPointType: pickupPointType || undefined,
+        acceptanceType: acceptanceType || undefined,
+        deliveryToPickupPoint: parseFloat(deliveryToPickupPoint) || 0,
+        productCost: parseFloat(productCost) || 0,
+        otherExpenses: parseFloat(otherExpenses) || 0,
+      };
+
+      // Если режим обратного расчёта
+      if (calcMode === "margin") {
+        const marginNum = parseFloat(targetMargin.replace(/\s/g, ""));
+        if (isNaN(marginNum) || marginNum < 0 || marginNum > 1000) {
+          setCalcError("Укажите корректную маржинальность (0-1000%)");
+          setIsCalculating(false);
+          return;
+        }
+        requestBody.targetMargin = marginNum;
+        requestBody.fulfillmentType = targetFulfillmentType;
+      } else {
+        // Обычный расчёт по цене
+        const priceNum = parseFloat(price.replace(/\s/g, ""));
+        if (!priceNum || priceNum <= 0) {
+          setCalcError("Укажите цену товара");
+          setIsCalculating(false);
+          return;
+        }
+        requestBody.price = priceNum;
+      }
+
       const response = await fetch("/api/calculate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          marketplace: "ozon",
-          categoryType: catType || undefined,
-          categoryValue: catValue || undefined,
-          price: priceNum,
-          volumeLiters: vol,
-          pickupPointType: pickupPointType || undefined,
-          acceptanceType: acceptanceType || undefined,
-          deliveryToPickupPoint: parseFloat(deliveryToPickupPoint) || 0,
-          productCost: parseFloat(productCost) || 0,
-          otherExpenses: parseFloat(otherExpenses) || 0,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       const data = await response.json();
       if (data.success && data.data) {
         setCalcResult(data.data);
+        // Если был обратный расчёт, обновляем цену в поле
+        if (calcMode === "margin" && data.data.price) {
+          setPrice(data.data.price.toFixed(2));
+        }
       } else {
         setCalcError(data.error || "Ошибка расчёта");
       }
@@ -599,17 +624,87 @@ export function OzonSingleProductCalculator() {
             </div>
           )}
 
+          {/* Режим расчёта */}
+          <div className="space-y-3">
+            <Label>Режим расчёта</Label>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant={calcMode === "price" ? "default" : "outline"}
+                onClick={() => setCalcMode("price")}
+                className="flex-1"
+              >
+                По цене
+              </Button>
+              <Button
+                type="button"
+                variant={calcMode === "margin" ? "default" : "outline"}
+                onClick={() => setCalcMode("margin")}
+                className="flex-1"
+              >
+                По марже
+              </Button>
+            </div>
+            {calcMode === "margin" && (
+              <div className="grid grid-cols-2 gap-4 pt-2">
+                <div className="space-y-2">
+                  <Label htmlFor="targetMargin">Желаемая маржинальность, %</Label>
+                  <Input
+                    id="targetMargin"
+                    type="text"
+                    value={targetMargin ? formatNumber(targetMargin) : ""}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\s/g, "");
+                      if (val === "" || /^\d*\.?\d*$/.test(val)) {
+                        setTargetMargin(val);
+                      }
+                    }}
+                    placeholder="30"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Маржинальность от себестоимости (0-1000%)
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="targetFulfillmentType">Тип отгрузки</Label>
+                  <Select
+                    value={targetFulfillmentType}
+                    onValueChange={(v) => setTargetFulfillmentType(v as "fbo" | "fbs" | "rfbs")}
+                  >
+                    <SelectTrigger id="targetFulfillmentType">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="fbo">FBO</SelectItem>
+                      <SelectItem value="fbs">FBS</SelectItem>
+                      <SelectItem value="rfbs">RFBS</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Цена и вес */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="price">Цена, ₽</Label>
+              <Label htmlFor="price">
+                {calcMode === "margin" ? "Рассчитанная цена, ₽" : "Цена, ₽"}
+              </Label>
               <Input
                 id="price"
                 type="text"
                 value={price ? formatNumber(price) : ""}
                 onChange={(e) => handlePriceChange(e.target.value)}
                 placeholder="0"
+                disabled={calcMode === "margin"}
+                className={calcMode === "margin" ? "bg-muted" : ""}
               />
+              {calcMode === "margin" && (
+                <p className="text-xs text-muted-foreground">
+                  Цена будет рассчитана автоматически
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="weight">Вес, кг</Label>
