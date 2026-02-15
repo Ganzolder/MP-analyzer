@@ -12,7 +12,10 @@ export async function GET(request: NextRequest) {
 
     const tariffs = await prisma.dispatchTariff.findMany({
       where: { marketplace, isActive: true },
-      orderBy: { shipmentPointGroup: "asc" },
+      orderBy: [
+        { shipmentPointGroup: "asc" },
+        { shipmentMethod: "asc" },
+      ],
     });
 
     return NextResponse.json({ success: true, data: tariffs });
@@ -35,6 +38,7 @@ export async function POST(request: NextRequest) {
     const marketplace = (body.marketplace || "ozon").toLowerCase();
     const tariffs = body.tariffs as Array<{
       shipmentPointGroup: string;
+      shipmentMethod?: string | null; // self, trust, standard, или null
       dispatchFee: number;
       notes?: string | null;
     }>;
@@ -61,9 +65,10 @@ export async function POST(request: NextRequest) {
 
         const res = await prisma.dispatchTariff.upsert({
           where: {
-            marketplace_shipmentPointGroup: {
+            marketplace_shipmentPointGroup_shipmentMethod: {
               marketplace,
               shipmentPointGroup: t.shipmentPointGroup,
+              shipmentMethod: t.shipmentMethod ?? null,
             },
           },
           update: {
@@ -73,6 +78,7 @@ export async function POST(request: NextRequest) {
           create: {
             marketplace,
             shipmentPointGroup: t.shipmentPointGroup,
+            shipmentMethod: t.shipmentMethod ?? null,
             dispatchFee: t.dispatchFee,
             notes: t.notes ?? null,
           },
@@ -100,11 +106,20 @@ export async function POST(request: NextRequest) {
 }
 
 async function ensureDispatchTariffTable() {
+  // Добавляем колонку shipmentMethod, если её нет
+  await prisma.$executeRaw`
+    ALTER TABLE "DispatchTariff" 
+    ADD COLUMN IF NOT EXISTS "shipmentMethod" TEXT
+  `.catch(() => {
+    // Игнорируем ошибку, если колонка уже существует
+  });
+
   await prisma.$executeRaw`
     CREATE TABLE IF NOT EXISTS "DispatchTariff" (
       "id" TEXT NOT NULL,
       "marketplace" TEXT NOT NULL DEFAULT 'ozon',
       "shipmentPointGroup" TEXT NOT NULL,
+      "shipmentMethod" TEXT,
       "dispatchFee" DOUBLE PRECISION NOT NULL,
       "isActive" BOOLEAN NOT NULL DEFAULT true,
       "notes" TEXT,
@@ -114,14 +129,25 @@ async function ensureDispatchTariffTable() {
     )
   `;
 
+  // Удаляем старый уникальный индекс, если существует
   await prisma.$executeRaw`
-    CREATE UNIQUE INDEX IF NOT EXISTS "DispatchTariff_marketplace_shipmentPointGroup_key"
-    ON "DispatchTariff"("marketplace", "shipmentPointGroup")
+    DROP INDEX IF EXISTS "DispatchTariff_marketplace_shipmentPointGroup_key"
+  `.catch(() => {});
+
+  // Создаём новый уникальный индекс с shipmentMethod
+  await prisma.$executeRaw`
+    CREATE UNIQUE INDEX IF NOT EXISTS "DispatchTariff_marketplace_shipmentPointGroup_shipmentMethod_key"
+    ON "DispatchTariff"("marketplace", "shipmentPointGroup", "shipmentMethod")
   `;
 
   await prisma.$executeRaw`
     CREATE INDEX IF NOT EXISTS "DispatchTariff_marketplace_shipmentPointGroup_idx"
     ON "DispatchTariff"("marketplace", "shipmentPointGroup")
+  `;
+
+  await prisma.$executeRaw`
+    CREATE INDEX IF NOT EXISTS "DispatchTariff_marketplace_shipmentPointGroup_shipmentMethod_idx"
+    ON "DispatchTariff"("marketplace", "shipmentPointGroup", "shipmentMethod")
   `;
 
   await prisma.$executeRaw`

@@ -258,19 +258,21 @@ model ProcessingTariff {
   @@index([isActive])
 }
 
-// Тарифы за отправление по типу точки отгрузки (ПВЗ/ППЗ, СЦ)
+// Тарифы за отправление по типу точки отгрузки (ПВЗ/ППЗ, СЦ) и способу отгрузки
 model DispatchTariff {
   id                  String   @id @default(cuid())
   marketplace         String   @default("ozon")
   shipmentPointGroup  String   // ПВЗ/ППЗ, СЦ
+  shipmentMethod      String?  // Способ отгрузки: self (Самоприёмка), trust (Доверительная приёмка), standard (Стандартная отгрузка). null = для всех способов (обратная совместимость)
   dispatchFee         Float    // Тариф за отправление (руб)
   isActive            Boolean  @default(true)
   notes               String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
-  @@unique([marketplace, shipmentPointGroup])
+  @@unique([marketplace, shipmentPointGroup, shipmentMethod])
   @@index([marketplace, shipmentPointGroup])
+  @@index([marketplace, shipmentPointGroup, shipmentMethod])
   @@index([isActive])
 }
 

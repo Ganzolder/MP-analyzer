@@ -236,7 +236,56 @@ export async function POST(request: NextRequest) {
     const fboShipping = await findShippingCost("fbo");
     const fbsShipping = await findShippingCost("fbs");
 
-    // ─── 3. ОБРАБОТКА FBS ────────────────────────────────────────
+    // ─── 3. ТАРИФ ЗА ОТПРАВЛЕНИЕ FBS ────────────────────────────
+    let fbsDispatchFee = 0;
+    let fbsDispatchDetails = "";
+
+    if (pickupPointType && acceptanceType) {
+      // Определяем способ отгрузки на основе типа приёмки
+      let shipmentMethod: string | null = null;
+      if (pickupPointType === "pvz-ppz") {
+        // Для ПВЗ/ППЗ всегда стандартная отгрузка
+        shipmentMethod = "standard";
+      } else if (pickupPointType === "sc") {
+        // Для СЦ зависит от типа приёмки
+        if (acceptanceType === "self") {
+          shipmentMethod = "self"; // Самоприёмка
+        } else if (acceptanceType === "trust") {
+          shipmentMethod = "trust"; // Доверительная приёмка
+        } else if (acceptanceType === "employee") {
+          shipmentMethod = "standard"; // Стандартная отгрузка
+        }
+      }
+
+      // Ищем тариф за отправление
+      const groupName = pickupPointType === "pvz-ppz" ? "ПВЗ/ППЗ" : "СЦ";
+      
+      const dispatchTariff = await prisma.dispatchTariff.findFirst({
+        where: {
+          marketplace: mkt,
+          shipmentPointGroup: groupName,
+          shipmentMethod: shipmentMethod,
+          isActive: true,
+        },
+      }) || await prisma.dispatchTariff.findFirst({
+        where: {
+          marketplace: mkt,
+          shipmentPointGroup: groupName,
+          shipmentMethod: null, // Для обратной совместимости
+          isActive: true,
+        },
+      });
+
+      if (dispatchTariff) {
+        fbsDispatchFee = dispatchTariff.dispatchFee;
+        const methodName = shipmentMethod === "self" ? "Самоприёмка" 
+          : shipmentMethod === "trust" ? "Доверительная приёмка"
+          : "Стандартная отгрузка";
+        fbsDispatchDetails = `Отправление (${groupName}, ${methodName}): ${fbsDispatchFee} ₽`;
+      }
+    }
+
+    // ─── 4. ОБРАБОТКА FBS ────────────────────────────────────────
     let fbsProcessingFee = 0;
     let fbsProcessingDetails = "";
 
@@ -283,7 +332,7 @@ export async function POST(request: NextRequest) {
       fbsProcessingDetails = `Обработка: ${processingFee.toFixed(2)} ₽`;
     }
 
-    // ─── 4. ЭКВАЙРИНГ ───────────────────────────────────────────
+    // ─── 5. ЭКВАЙРИНГ ───────────────────────────────────────────
     let acquiringPct = 0;
     try {
       const acquiringSettings = await prisma.acquiringSettings.findUnique({
@@ -295,7 +344,7 @@ export async function POST(request: NextRequest) {
     }
     const acquiringFee = Math.round(price * acquiringPct / 100 * 100) / 100;
 
-    // ─── 5. ИТОГОВЫЕ РАСЧЁТЫ ────────────────────────────────────
+    // ─── 6. ИТОГОВЫЕ РАСЧЁТЫ ────────────────────────────────────
     const totalCost = productCost + otherExpenses;
 
     // FBO
@@ -304,8 +353,8 @@ export async function POST(request: NextRequest) {
     const fboMargin = price > 0 ? Math.round(fboProfit / price * 10000) / 100 : 0;
 
     // FBS
-    // Всегда прибавляем доставку до места выдачи к расчёту FBS
-    const fbsTotalFees = fbsCommission + fbsShipping.cost + fbsProcessingFee + deliveryToPickupPoint + acquiringFee;
+    // Всегда прибавляем доставку до места выдачи и тариф за отправление к расчёту FBS
+    const fbsTotalFees = fbsCommission + fbsShipping.cost + fbsProcessingFee + fbsDispatchFee + deliveryToPickupPoint + acquiringFee;
     const fbsProfit = price - fbsTotalFees - totalCost;
     const fbsMargin = price > 0 ? Math.round(fbsProfit / price * 10000) / 100 : 0;
 
@@ -349,6 +398,8 @@ export async function POST(request: NextRequest) {
           shippingDetails: fbsShipping.tariffDetails,
           processingFee: fbsProcessingFee,
           processingDetails: fbsProcessingDetails || "Не выбран тип отгрузки",
+          dispatchFee: fbsDispatchFee,
+          dispatchDetails: fbsDispatchDetails || "Не выбран тип отгрузки",
           deliveryToPickupPoint: deliveryToPickupPoint,
           acquiringFee,
           totalFees: Math.round(fbsTotalFees * 100) / 100,
