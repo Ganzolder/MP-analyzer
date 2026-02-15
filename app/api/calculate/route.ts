@@ -240,14 +240,14 @@ export async function POST(request: NextRequest) {
     let fbsDispatchFee = 0;
     let fbsDispatchDetails = "";
 
-    if (pickupPointType && acceptanceType) {
+    if (pickupPointType) {
       // Определяем способ отгрузки на основе типа приёмки
       let shipmentMethod: string | null = null;
       if (pickupPointType === "pvz-ppz") {
         // Для ПВЗ/ППЗ всегда стандартная отгрузка
         shipmentMethod = "standard";
-      } else if (pickupPointType === "sc") {
-        // Для СЦ зависит от типа приёмки
+      } else if (pickupPointType === "sc" && acceptanceType) {
+        // Для СЦ зависит от типа приёмки (только если указан)
         if (acceptanceType === "self") {
           shipmentMethod = "self"; // Самоприёмка
         } else if (acceptanceType === "trust") {
@@ -260,28 +260,37 @@ export async function POST(request: NextRequest) {
       // Ищем тариф за отправление
       const groupName = pickupPointType === "pvz-ppz" ? "ПВЗ/ППЗ" : "СЦ";
       
-      const dispatchTariff = await prisma.dispatchTariff.findFirst({
-        where: {
-          marketplace: mkt,
-          shipmentPointGroup: groupName,
-          shipmentMethod: shipmentMethod,
-          isActive: true,
-        },
-      }) || await prisma.dispatchTariff.findFirst({
-        where: {
-          marketplace: mkt,
-          shipmentPointGroup: groupName,
-          shipmentMethod: null, // Для обратной совместимости
-          isActive: true,
-        },
-      });
+      // Сначала ищем с конкретным shipmentMethod (если указан)
+      let dispatchTariff = null;
+      if (shipmentMethod) {
+        dispatchTariff = await prisma.dispatchTariff.findFirst({
+          where: {
+            marketplace: mkt,
+            shipmentPointGroup: groupName,
+            shipmentMethod: shipmentMethod,
+            isActive: true,
+          },
+        });
+      }
+      
+      // Если не найден, ищем с null (для обратной совместимости или общих тарифов)
+      if (!dispatchTariff) {
+        dispatchTariff = await prisma.dispatchTariff.findFirst({
+          where: {
+            marketplace: mkt,
+            shipmentPointGroup: groupName,
+            shipmentMethod: null,
+            isActive: true,
+          },
+        });
+      }
 
       if (dispatchTariff) {
         fbsDispatchFee = dispatchTariff.dispatchFee;
         const methodName = shipmentMethod === "self" ? "Самоприёмка" 
           : shipmentMethod === "trust" ? "Доверительная приёмка"
           : "Стандартная отгрузка";
-        fbsDispatchDetails = `Отправление (${groupName}, ${methodName}): ${fbsDispatchFee} ₽`;
+        fbsDispatchDetails = `Отправление (${groupName}${shipmentMethod ? `, ${methodName}` : ""}): ${fbsDispatchFee} ₽`;
       }
     }
 

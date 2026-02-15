@@ -958,7 +958,7 @@ export function OzonSingleProductCalculator() {
                   let shipmentMethod: string | null = null;
                   if (pickupPointType === "pvz-ppz") {
                     shipmentMethod = "standard";
-                  } else if (pickupPointType === "sc") {
+                  } else if (pickupPointType === "sc" && acceptanceType) {
                     if (acceptanceType === "self") {
                       shipmentMethod = "self";
                     } else if (acceptanceType === "trust") {
@@ -969,12 +969,30 @@ export function OzonSingleProductCalculator() {
                   }
                   
                   const groupName = pickupPointType === "pvz-ppz" ? "ПВЗ/ППЗ" : "СЦ";
-                  const dispatchTariff = dispatchTariffs.find(
-                    (t) => t.shipmentPointGroup === groupName && 
-                           (t.shipmentMethod === shipmentMethod || t.shipmentMethod === null)
-                  ) || dispatchTariffs.find(
-                    (t) => t.shipmentPointGroup === groupName
-                  );
+                  
+                  // Сначала ищем с конкретным shipmentMethod (если указан)
+                  let dispatchTariff = null;
+                  if (shipmentMethod) {
+                    dispatchTariff = dispatchTariffs.find(
+                      (t) => t.shipmentPointGroup === groupName && 
+                             t.shipmentMethod === shipmentMethod
+                    );
+                  }
+                  
+                  // Если не найден, ищем с null (для обратной совместимости или общих тарифов)
+                  if (!dispatchTariff) {
+                    dispatchTariff = dispatchTariffs.find(
+                      (t) => t.shipmentPointGroup === groupName && 
+                             t.shipmentMethod === null
+                    );
+                  }
+                  
+                  // Если всё ещё не найден, ищем любой тариф для этой группы (fallback)
+                  if (!dispatchTariff) {
+                    dispatchTariff = dispatchTariffs.find(
+                      (t) => t.shipmentPointGroup === groupName
+                    );
+                  }
                   
                   if (dispatchTariff) {
                     dispatchFee = dispatchTariff.dispatchFee;
