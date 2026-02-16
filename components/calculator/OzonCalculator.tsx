@@ -35,14 +35,37 @@ export function OzonCalculator() {
   // Параметры отгрузки для массового расчёта
   const [pickupPointType, setPickupPointType] = useState<string>("pvz-ppz");
   const [acceptanceType, setAcceptanceType] = useState<string>("employee");
-  const [deliveryToPickupPoint, setDeliveryToPickupPoint] = useState<string>("25");
-  const [lastMileFee, setLastMileFee] = useState<string>("25");
+
+  // Тарифы из настроек (загружаются из БД)
+  const [tariffLastMileFee, setTariffLastMileFee] = useState<number>(25);
+  const [tariffDeliveryToPickupFee, setTariffDeliveryToPickupFee] = useState<number>(25);
 
   // Результаты массового расчёта
   const [bulkResults, setBulkResults] = useState<BulkCalcResult[] | null>(null);
   const [bulkMeta, setBulkMeta] = useState<any>(null);
   const [isCalculating, setIsCalculating] = useState(false);
   const [calcError, setCalcError] = useState<string | null>(null);
+
+  // Загрузка тарифов из настроек
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const res = await fetch("/api/acquiring-settings?marketplace=ozon");
+        const data = await res.json();
+        if (data.success && data.data) {
+          if (typeof data.data.lastMileFee === "number") {
+            setTariffLastMileFee(data.data.lastMileFee);
+          }
+          if (typeof data.data.deliveryToPickupFee === "number") {
+            setTariffDeliveryToPickupFee(data.data.deliveryToPickupFee);
+          }
+        }
+      } catch (e) {
+        console.error("Ошибка при загрузке настроек:", e);
+      }
+    };
+    loadSettings();
+  }, []);
 
   // Синхронизируем localGlobalMargin с store
   useEffect(() => {
@@ -193,8 +216,6 @@ export function OzonCalculator() {
           categoryMargins: catMargins,
           pickupPointType,
           acceptanceType,
-          deliveryToPickupPoint: parseFloat(deliveryToPickupPoint) || 25,
-          lastMileFee: parseFloat(lastMileFee) || 25,
         }),
       });
 
@@ -455,27 +476,20 @@ export function OzonCalculator() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="space-y-2">
-                      <Label>Доставка до ПВЗ (FBS), ₽</Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={deliveryToPickupPoint}
-                        onChange={(e) => setDeliveryToPickupPoint(e.target.value)}
-                        placeholder="25"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Последняя миля (FBO), ₽</Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={lastMileFee}
-                        onChange={(e) => setLastMileFee(e.target.value)}
-                        placeholder="25"
-                      />
+                    {/* Тарифы из настроек (только чтение) */}
+                    <div className="col-span-2 rounded-lg border bg-blue-50/50 dark:bg-blue-950/20 p-3 space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground">Тарифы из настроек:</p>
+                      <div className="flex justify-between text-sm">
+                        <span>Последняя миля (FBO):</span>
+                        <span className="font-medium">{tariffLastMileFee} ₽</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span>Доставка до места выдачи (FBS):</span>
+                        <span className="font-medium">{tariffDeliveryToPickupFee} ₽</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Изменить можно в разделе «Тарифы» → «Настройки эквайринга и тарифов»
+                      </p>
                     </div>
                   </div>
                 </CardContent>

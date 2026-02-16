@@ -10,13 +10,16 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const marketplace = (searchParams.get("marketplace") || "ozon").toLowerCase();
 
+    // Гарантируем существование таблицы и колонок
+    await ensureAcquiringSettingsTable();
+
     const settings = await prisma.acquiringSettings.findUnique({
       where: { marketplace },
     });
 
     return NextResponse.json({
       success: true,
-      data: settings || { marketplace, acquiringPercent: 0, isActive: true },
+      data: settings || { marketplace, acquiringPercent: 0, lastMileFee: 25, deliveryToPickupFee: 25, isActive: true },
     });
   } catch (error: any) {
     console.error("❌ [API] Ошибка при получении настроек эквайринга:", error);
@@ -39,7 +42,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const marketplace = (body.marketplace || "ozon").toLowerCase();
-    const { acquiringPercent, notes } = body;
+    const { acquiringPercent, lastMileFee, deliveryToPickupFee, notes } = body;
 
     if (typeof acquiringPercent !== "number" || acquiringPercent < 0) {
       return NextResponse.json(
@@ -51,19 +54,31 @@ export async function POST(request: NextRequest) {
     // Гарантируем существование таблицы
     await ensureAcquiringSettingsTable();
 
+    const updateData: any = {
+      acquiringPercent,
+      notes: notes || null,
+      updatedAt: new Date(),
+    };
+    const createData: any = {
+      marketplace,
+      acquiringPercent,
+      notes: notes || null,
+      isActive: true,
+    };
+
+    if (typeof lastMileFee === "number") {
+      updateData.lastMileFee = lastMileFee;
+      createData.lastMileFee = lastMileFee;
+    }
+    if (typeof deliveryToPickupFee === "number") {
+      updateData.deliveryToPickupFee = deliveryToPickupFee;
+      createData.deliveryToPickupFee = deliveryToPickupFee;
+    }
+
     const settings = await prisma.acquiringSettings.upsert({
       where: { marketplace },
-      update: {
-        acquiringPercent,
-        notes: notes || null,
-        updatedAt: new Date(),
-      },
-      create: {
-        marketplace,
-        acquiringPercent,
-        notes: notes || null,
-        isActive: true,
-      },
+      update: updateData,
+      create: createData,
     });
 
     return NextResponse.json({
@@ -111,4 +126,8 @@ async function ensureAcquiringSettingsTable() {
     CREATE INDEX IF NOT EXISTS "AcquiringSettings_isActive_idx"
     ON "AcquiringSettings"("isActive")
   `;
+
+  // Soft migrations: добавляем новые колонки если их нет
+  await prisma.$executeRaw`ALTER TABLE "AcquiringSettings" ADD COLUMN IF NOT EXISTS "lastMileFee" DOUBLE PRECISION NOT NULL DEFAULT 25`;
+  await prisma.$executeRaw`ALTER TABLE "AcquiringSettings" ADD COLUMN IF NOT EXISTS "deliveryToPickupFee" DOUBLE PRECISION NOT NULL DEFAULT 25`;
 }

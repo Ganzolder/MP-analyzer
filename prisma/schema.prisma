@@ -281,6 +281,8 @@ model AcquiringSettings {
   id                  String   @id @default(cuid())
   marketplace         String   @default("ozon")
   acquiringPercent    Float    // Процент эквайринга (%)
+  lastMileFee         Float    @default(25) // Последняя миля FBO (руб)
+  deliveryToPickupFee Float    @default(25) // Доставка до места выдачи FBS (руб)
   isActive            Boolean  @default(true)
   notes               String?
   createdAt           DateTime @default(now())

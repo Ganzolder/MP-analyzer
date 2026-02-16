@@ -46,6 +46,9 @@ export function Header() {
           <NavLink href="/admin/processing-tariffs">
             Обработка FBS
           </NavLink>
+          <NavLink href="/admin/acquiring-settings">
+            Эквайринг
+          </NavLink>
           <NavLink href="/settings" badge="Скоро">
             Настройки
           </NavLink>
@@ -94,6 +97,9 @@ export function Header() {
             </MobileNavLink>
             <MobileNavLink href="/admin/processing-tariffs" icon={<Settings className="h-4 w-4" />} onClick={() => setIsMenuOpen(false)}>
               Обработка FBS
+            </MobileNavLink>
+            <MobileNavLink href="/admin/acquiring-settings" icon={<Settings className="h-4 w-4" />} onClick={() => setIsMenuOpen(false)}>
+              Эквайринг
             </MobileNavLink>
             <MobileNavLink href="/settings" icon={<Settings className="h-4 w-4" />} badge="Скоро" onClick={() => setIsMenuOpen(false)}>
               Настройки

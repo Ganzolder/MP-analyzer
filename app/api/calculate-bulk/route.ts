@@ -16,8 +16,8 @@ export async function POST(request: NextRequest) {
       categoryMargins = {},
       pickupPointType = "pvz-ppz",
       acceptanceType = "employee",
-      deliveryToPickupPoint = 25,
-      lastMileFee = 25, // Последняя миля FBO (по умолчанию 25 ₽)
+      deliveryToPickupPoint, // из БД если не передан
+      lastMileFee, // из БД если не передан
     } = body;
 
     if (!Array.isArray(products) || products.length === 0) {
@@ -66,13 +66,21 @@ export async function POST(request: NextRequest) {
       if (c.productType) commissionByProductType.set(c.productType.toLowerCase(), c);
     }
 
-    // 1b. Эквайринг
+    // 1b. Эквайринг и тарифы из настроек
     let acquiringPct = 0;
+    let resolvedLastMileFee = lastMileFee ?? 25;
+    let resolvedDeliveryToPickupPoint = deliveryToPickupPoint ?? 25;
     try {
       const acquiringSettings = await prisma.acquiringSettings.findUnique({
         where: { marketplace: mkt },
       });
       acquiringPct = acquiringSettings?.acquiringPercent || 0;
+      if (lastMileFee === undefined || lastMileFee === null) {
+        resolvedLastMileFee = (acquiringSettings as any)?.lastMileFee ?? 25;
+      }
+      if (deliveryToPickupPoint === undefined || deliveryToPickupPoint === null) {
+        resolvedDeliveryToPickupPoint = (acquiringSettings as any)?.deliveryToPickupFee ?? 25;
+      }
     } catch (e) {
       // Таблица может не существовать
     }
@@ -343,7 +351,7 @@ export async function POST(request: NextRequest) {
 
         // --- FBO ---
         // Сначала оцениваем цену, чтобы определить price band для логистики
-        const fboFixedBase = lastMileFee; // Последняя миля FBO
+        const fboFixedBase = resolvedLastMileFee; // Последняя миля FBO
         const fboEstimate = computeRecommendedPrice(commission, "fbo", totalCost, targetMargin, fboFixedBase);
         const fboPriceBand = fboEstimate <= 300 ? "up_to_300" : "over_300";
         const fboShipping = calculateShipping("fbo", volumeLiters, fboPriceBand);
@@ -358,10 +366,10 @@ export async function POST(request: NextRequest) {
           ? computeRecommendedPrice(commission, "fbo", totalCost, targetMargin, fboFinalShipping + fboFixedBase)
           : fboPrice;
 
-        const fbo = calculateFulfillment(commission, "fbo", fboFinalPrice, fboFinalShipping, 0, lastMileFee, totalCost);
+        const fbo = calculateFulfillment(commission, "fbo", fboFinalPrice, fboFinalShipping, 0, resolvedLastMileFee, totalCost);
 
         // --- FBS ---
-        const fbsFixedBase = fbsDispatchFee + deliveryToPickupPoint;
+        const fbsFixedBase = fbsDispatchFee + resolvedDeliveryToPickupPoint;
         const fbsEstimate = computeRecommendedPrice(commission, "fbs", totalCost, targetMargin, fbsFixedBase);
         const fbsPriceBand = fbsEstimate <= 300 ? "up_to_300" : "over_300";
         const fbsShipping = calculateShipping("fbs", volumeLiters, fbsPriceBand);
@@ -374,7 +382,7 @@ export async function POST(request: NextRequest) {
           ? computeRecommendedPrice(commission, "fbs", totalCost, targetMargin, fbsFinalShipping + fbsFixedBase)
           : fbsPrice;
 
-        const fbs = calculateFulfillment(commission, "fbs", fbsFinalPrice, fbsFinalShipping, fbsDispatchFee, deliveryToPickupPoint, totalCost);
+        const fbs = calculateFulfillment(commission, "fbs", fbsFinalPrice, fbsFinalShipping, fbsDispatchFee, resolvedDeliveryToPickupPoint, totalCost);
 
         // --- RFBS ---
         const rfbsPrice = computeRecommendedPrice(commission, "rfbs", totalCost, targetMargin, 0);
@@ -410,10 +418,10 @@ export async function POST(request: NextRequest) {
           errorProducts: results.filter((r) => r.error).length,
           acquiringPct,
           dispatchFee: fbsDispatchFee,
-          lastMileFee,
+          lastMileFee: resolvedLastMileFee,
           pickupPointType,
           acceptanceType,
-          deliveryToPickupPoint,
+          deliveryToPickupPoint: resolvedDeliveryToPickupPoint,
         },
       },
     });

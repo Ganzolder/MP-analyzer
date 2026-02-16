@@ -127,6 +127,7 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
       "FBO Последняя миля, ₽": r.fbo.deliveryToPickup.toFixed(2),
       "FBO Эквайринг, ₽": r.fbo.acquiringFee.toFixed(2),
       "FBO Итого сборы, ₽": r.fbo.totalFees.toFixed(2),
+      "FBO К начислению, ₽": (r.fbo.recommendedPrice - r.fbo.totalFees).toFixed(2),
       "FBO Прибыль, ₽": r.fbo.profit.toFixed(2),
       "FBO Маржа от цены, %": r.fbo.marginPct,
       // FBS
@@ -138,6 +139,7 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
       "FBS Доставка до ПВЗ, ₽": r.fbs.deliveryToPickup.toFixed(2),
       "FBS Эквайринг, ₽": r.fbs.acquiringFee.toFixed(2),
       "FBS Итого сборы, ₽": r.fbs.totalFees.toFixed(2),
+      "FBS К начислению, ₽": (r.fbs.recommendedPrice - r.fbs.totalFees).toFixed(2),
       "FBS Прибыль, ₽": r.fbs.profit.toFixed(2),
       "FBS Маржа от цены, %": r.fbs.marginPct,
       // RFBS
@@ -146,6 +148,7 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
       "RFBS Комиссия, ₽": r.rfbs.commissionAmount.toFixed(2),
       "RFBS Эквайринг, ₽": r.rfbs.acquiringFee.toFixed(2),
       "RFBS Итого сборы, ₽": r.rfbs.totalFees.toFixed(2),
+      "RFBS К начислению, ₽": (r.rfbs.recommendedPrice - r.rfbs.totalFees).toFixed(2),
       "RFBS Прибыль, ₽": r.rfbs.profit.toFixed(2),
       "RFBS Маржа от цены, %": r.rfbs.marginPct,
       // Ошибки

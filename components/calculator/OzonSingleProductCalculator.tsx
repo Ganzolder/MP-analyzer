@@ -119,8 +119,11 @@ export function OzonSingleProductCalculator() {
   const [shipmentMethod, setShipmentMethod] = useState<"pickup" | "courier">("pickup");
   const [pickupPointType, setPickupPointType] = useState<string>("");
   const [acceptanceType, setAcceptanceType] = useState<string>("");
-  const [deliveryToPickupPoint, setDeliveryToPickupPoint] = useState<string>("25");
-  const [lastMileFee, setLastMileFee] = useState<string>("25");
+  const [rfbsLogisticsCost, setRfbsLogisticsCost] = useState<string>("");
+
+  // Тарифы из настроек (загружаются из БД)
+  const [tariffLastMileFee, setTariffLastMileFee] = useState<number>(25);
+  const [tariffDeliveryToPickupFee, setTariffDeliveryToPickupFee] = useState<number>(25);
 
   // Себестоимость
   const [costMode, setCostMode] = useState<"single" | "batch">("single");
@@ -204,16 +207,28 @@ export function OzonSingleProductCalculator() {
     { shipmentPointGroup: "СЦ", shipmentMethod: "trust", dispatchFee: 10 },
   ];
 
-  // Загрузка тарифов за отправление при монтировании
+  // Загрузка тарифов за отправление и настроек при монтировании
   useEffect(() => {
     const loadTariffs = async () => {
       try {
-        const dispRes = await fetch("/api/dispatch-tariffs?marketplace=ozon");
+        const [dispRes, acqRes] = await Promise.all([
+          fetch("/api/dispatch-tariffs?marketplace=ozon"),
+          fetch("/api/acquiring-settings?marketplace=ozon"),
+        ]);
         const dispData = await dispRes.json();
         if (dispData.success && dispData.data && dispData.data.length > 0) {
           setDispatchTariffs(dispData.data);
         } else {
           setDispatchTariffs(DEFAULT_DISPATCH_TARIFFS);
+        }
+        const acqData = await acqRes.json();
+        if (acqData.success && acqData.data) {
+          if (typeof acqData.data.lastMileFee === "number") {
+            setTariffLastMileFee(acqData.data.lastMileFee);
+          }
+          if (typeof acqData.data.deliveryToPickupFee === "number") {
+            setTariffDeliveryToPickupFee(acqData.data.deliveryToPickupFee);
+          }
         }
       } catch (error) {
         console.error("Ошибка при загрузке тарифов:", error);
@@ -380,8 +395,7 @@ export function OzonSingleProductCalculator() {
         volumeLiters: vol,
         pickupPointType: pickupPointType || undefined,
         acceptanceType: acceptanceType || undefined,
-          deliveryToPickupPoint: parseFloat(deliveryToPickupPoint) || 0,
-          lastMileFee: parseFloat(lastMileFee) || 0,
+        rfbsLogisticsCost: parseFloat(rfbsLogisticsCost) || 0,
         productCost: parseFloat(productCost) || 0,
         otherExpenses: parseFloat(otherExpenses) || 0,
       };
@@ -851,37 +865,36 @@ export function OzonSingleProductCalculator() {
             </Select>
           </div>
 
-          {/* Доставка до места выдачи */}
+          {/* Логистика RFBS */}
           <div className="space-y-2">
-            <Label htmlFor="deliveryToPickupPoint">Доставка до места выдачи (FBS), ₽</Label>
+            <Label htmlFor="rfbsLogisticsCost">Стоимость логистики (RFBS), ₽</Label>
             <Input
-              id="deliveryToPickupPoint"
+              id="rfbsLogisticsCost"
               type="number"
               step="0.01"
               min="0"
-              value={deliveryToPickupPoint}
-              onChange={(e) => setDeliveryToPickupPoint(e.target.value)}
-              placeholder="25"
+              value={rfbsLogisticsCost}
+              onChange={(e) => setRfbsLogisticsCost(e.target.value)}
+              placeholder="0"
             />
             <p className="text-xs text-muted-foreground">
-              Стоимость доставки товара до места выдачи (ПВЗ/ППЗ/СЦ). Прибавляется к расчёту FBS всегда.
+              Стоимость доставки товара для RFBS (доставка продавцом). Учитывается только в расчёте RFBS.
             </p>
           </div>
 
-          {/* Последняя миля FBO */}
-          <div className="space-y-2">
-            <Label htmlFor="lastMileFee">Последняя миля (FBO), ₽</Label>
-            <Input
-              id="lastMileFee"
-              type="number"
-              step="0.01"
-              min="0"
-              value={lastMileFee}
-              onChange={(e) => setLastMileFee(e.target.value)}
-              placeholder="25"
-            />
-            <p className="text-xs text-muted-foreground">
-              Стоимость последней мили доставки FBO. Прибавляется к расчёту FBO всегда.
+          {/* Тарифы из настроек (только чтение) */}
+          <div className="rounded-lg border bg-blue-50/50 dark:bg-blue-950/20 p-3 space-y-1">
+            <p className="text-xs font-medium text-muted-foreground">Тарифы из настроек:</p>
+            <div className="flex justify-between text-sm">
+              <span>Последняя миля (FBO):</span>
+              <span className="font-medium">{tariffLastMileFee} ₽</span>
+            </div>
+            <div className="flex justify-between text-sm">
+              <span>Доставка до места выдачи (FBS):</span>
+              <span className="font-medium">{tariffDeliveryToPickupFee} ₽</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Изменить можно в разделе «Тарифы» → «Настройки эквайринга и тарифов»
             </p>
           </div>
 
@@ -1206,8 +1219,8 @@ export function OzonSingleProductCalculator() {
                     <td className="text-right py-2.5 px-3 text-red-500">
                       {calcResult.fbs.shippingCost > 0 ? `−${fmtMoney(calcResult.fbs.shippingCost)}` : "—"}
                     </td>
-                    <td className="text-right py-2.5 px-3 text-muted-foreground">
-                      своя
+                    <td className="text-right py-2.5 px-3 text-red-500">
+                      {calcResult.rfbs.shippingCost > 0 ? `−${fmtMoney(calcResult.rfbs.shippingCost)}` : "—"}
                     </td>
                   </tr>
 
@@ -1268,6 +1281,34 @@ export function OzonSingleProductCalculator() {
                     <td className="text-right py-2.5 px-3 text-red-500">−{fmtMoney(calcResult.acquiringFee)}</td>
                   </tr>
 
+                  {/* Итого удержания (без себестоимости) */}
+                  <tr className="border-b-2 border-t-2">
+                    <td className="py-2.5 px-3 font-bold">Итого удержания</td>
+                    <td className="text-right py-2.5 px-3 font-bold text-red-600">−{fmtMoney(calcResult.fbo.totalFees)}</td>
+                    <td className="text-right py-2.5 px-3 font-bold text-red-600">−{fmtMoney(calcResult.fbs.totalFees)}</td>
+                    <td className="text-right py-2.5 px-3 font-bold text-red-600">−{fmtMoney(calcResult.rfbs.totalFees)}</td>
+                  </tr>
+
+                  {/* Сумма к начислению */}
+                  <tr className="border-b-2 bg-emerald-50/40 dark:bg-emerald-950/20">
+                    <td className="py-2.5 px-3 font-bold">
+                      Сумма к начислению
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Info className="h-3.5 w-3.5 text-muted-foreground inline ml-1 cursor-help" />
+                          </TooltipTrigger>
+                          <TooltipContent side="right" className="max-w-xs">
+                            <p className="text-xs">Цена продажи минус все удержания маркетплейса (комиссия, логистика, обработка, эквайринг и т.д.)</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </td>
+                    <td className="text-right py-2.5 px-3 font-bold text-emerald-600">{fmtMoney(calcResult.price - calcResult.fbo.totalFees)}</td>
+                    <td className="text-right py-2.5 px-3 font-bold text-emerald-600">{fmtMoney(calcResult.price - calcResult.fbs.totalFees)}</td>
+                    <td className="text-right py-2.5 px-3 font-bold text-emerald-600">{fmtMoney(calcResult.price - calcResult.rfbs.totalFees)}</td>
+                  </tr>
+
                   {/* Себестоимость */}
                   {calcResult.totalCost > 0 && (
                     <tr className="border-b bg-muted/10">
@@ -1279,14 +1320,6 @@ export function OzonSingleProductCalculator() {
                       <td className="text-right py-2.5 px-3 text-red-500">−{fmtMoney(calcResult.totalCost)}</td>
                     </tr>
                   )}
-
-                  {/* Разделитель */}
-                  <tr className="border-b-2 border-t-2">
-                    <td className="py-2.5 px-3 font-bold">Итого удержания</td>
-                    <td className="text-right py-2.5 px-3 font-bold text-red-600">−{fmtMoney(calcResult.fbo.totalFees + calcResult.totalCost)}</td>
-                    <td className="text-right py-2.5 px-3 font-bold text-red-600">−{fmtMoney(calcResult.fbs.totalFees + calcResult.totalCost)}</td>
-                    <td className="text-right py-2.5 px-3 font-bold text-red-600">−{fmtMoney(calcResult.rfbs.totalFees + calcResult.totalCost)}</td>
-                  </tr>
 
                   {/* Прибыль до налогов */}
                   <tr className={taxRegime !== "none" ? "bg-muted/10" : "bg-muted/30"}>

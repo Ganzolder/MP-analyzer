@@ -18,8 +18,9 @@ export async function POST(request: NextRequest) {
       volumeLiters,
       pickupPointType,
       acceptanceType,
-      deliveryToPickupPoint = 25,
-      lastMileFee = 25, // Последняя миля FBO (по умолчанию 25 ₽)
+      deliveryToPickupPoint, // будет прочитан из БД если не передан
+      lastMileFee, // будет прочитан из БД если не передан
+      rfbsLogisticsCost = 0, // стоимость логистики RFBS
       productCost = 0,
       otherExpenses = 0,
       targetMargin, // Опциональная желаемая маржинальность от себестоимости (%)
@@ -278,13 +279,22 @@ export async function POST(request: NextRequest) {
     const fbsProcessingFee = 0;
     const fbsProcessingDetails = "Включено в тариф за отправление";
 
-    // ─── 5. ЭКВАЙРИНГ ───────────────────────────────────────────
+    // ─── 5. ЭКВАЙРИНГ И ТАРИФЫ ИЗ НАСТРОЕК ─────────────────────
     let acquiringPct = 0;
+    let resolvedLastMileFee = lastMileFee ?? 25;
+    let resolvedDeliveryToPickupPoint = deliveryToPickupPoint ?? 25;
     try {
       const acquiringSettings = await prisma.acquiringSettings.findUnique({
         where: { marketplace: mkt },
       });
       acquiringPct = acquiringSettings?.acquiringPercent || 0;
+      // Берём из БД, если не переданы в запросе
+      if (lastMileFee === undefined || lastMileFee === null) {
+        resolvedLastMileFee = (acquiringSettings as any)?.lastMileFee ?? 25;
+      }
+      if (deliveryToPickupPoint === undefined || deliveryToPickupPoint === null) {
+        resolvedDeliveryToPickupPoint = (acquiringSettings as any)?.deliveryToPickupFee ?? 25;
+      }
     } catch (e) {
       // Таблица может не существовать — не критично
     }
@@ -294,17 +304,17 @@ export async function POST(request: NextRequest) {
     const totalCost = productCost + otherExpenses;
 
     // FBO (включая Последнюю милю)
-    const fboTotalFees = fboCommission + fboShipping.cost + lastMileFee + acquiringFee;
+    const fboTotalFees = fboCommission + fboShipping.cost + resolvedLastMileFee + acquiringFee;
     const fboProfit = price - fboTotalFees - totalCost;
     const fboMargin = price > 0 ? Math.round(fboProfit / price * 10000) / 100 : 0;
 
     // FBS
-    const fbsTotalFees = fbsCommission + fbsShipping.cost + fbsDispatchFee + deliveryToPickupPoint + acquiringFee;
+    const fbsTotalFees = fbsCommission + fbsShipping.cost + fbsDispatchFee + resolvedDeliveryToPickupPoint + acquiringFee;
     const fbsProfit = price - fbsTotalFees - totalCost;
     const fbsMargin = price > 0 ? Math.round(fbsProfit / price * 10000) / 100 : 0;
 
-    // RFBS
-    const rfbsTotalFees = rfbsCommission + acquiringFee;
+    // RFBS (+ логистика RFBS если указана)
+    const rfbsTotalFees = rfbsCommission + rfbsLogisticsCost + acquiringFee;
     const rfbsProfit = price - rfbsTotalFees - totalCost;
     const rfbsMargin = price > 0 ? Math.round(rfbsProfit / price * 10000) / 100 : 0;
 
@@ -366,9 +376,9 @@ export async function POST(request: NextRequest) {
       };
       
       // Фиксированные сборы для каждого типа
-      const fboFixedFees = fboShipping.cost + lastMileFee;
-      const fbsFixedFees = fbsShipping.cost + fbsDispatchFee + deliveryToPickupPoint;
-      const rfbsFixedFees = 0;
+      const fboFixedFees = fboShipping.cost + resolvedLastMileFee;
+      const fbsFixedFees = fbsShipping.cost + fbsDispatchFee + resolvedDeliveryToPickupPoint;
+      const rfbsFixedFees = rfbsLogisticsCost;
       
       const fboRequiredPrice = computeRequiredPrice("fbo", fboFixedFees);
       const fbsRequiredPrice = computeRequiredPrice("fbs", fbsFixedFees);
@@ -408,7 +418,7 @@ export async function POST(request: NextRequest) {
           commissionAmount: fboCommission,
           shippingCost: fboShipping.cost,
           shippingDetails: fboShipping.tariffDetails,
-          lastMileFee: lastMileFee,
+          lastMileFee: resolvedLastMileFee,
           processingFee: 0,
           processingDetails: "FBO — обработка включена",
           acquiringFee,
@@ -425,7 +435,7 @@ export async function POST(request: NextRequest) {
           processingDetails: fbsProcessingDetails || "Не выбран тип отгрузки",
           dispatchFee: fbsDispatchFee,
           dispatchDetails: fbsDispatchDetails || "Не выбран тип отгрузки",
-          deliveryToPickupPoint: deliveryToPickupPoint,
+          deliveryToPickupPoint: resolvedDeliveryToPickupPoint,
           acquiringFee,
           totalFees: Math.round(fbsTotalFees * 100) / 100,
           profit: Math.round(fbsProfit * 100) / 100,
@@ -434,8 +444,8 @@ export async function POST(request: NextRequest) {
         rfbs: {
           commissionPct: Math.round(rfbsCommissionPct),
           commissionAmount: rfbsCommission,
-          shippingCost: 0,
-          shippingDetails: "RFBS — доставка продавцом",
+          shippingCost: rfbsLogisticsCost,
+          shippingDetails: rfbsLogisticsCost > 0 ? `Логистика RFBS: ${rfbsLogisticsCost} ₽` : "RFBS — доставка продавцом",
           processingFee: 0,
           processingDetails: "RFBS — без обработки",
           acquiringFee,
