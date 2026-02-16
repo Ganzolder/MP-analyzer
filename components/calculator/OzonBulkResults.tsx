@@ -26,6 +26,7 @@ interface OzonBulkResultsProps {
     errorProducts: number;
     acquiringPct: number;
     dispatchFee: number;
+    lastMileFee: number;
     pickupPointType: string;
     acceptanceType: string;
     deliveryToPickupPoint: number;
@@ -123,6 +124,7 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
       "FBO Комиссия, %": r.fbo.commissionPct,
       "FBO Комиссия, ₽": r.fbo.commissionAmount.toFixed(2),
       "FBO Логистика, ₽": r.fbo.shippingCost.toFixed(2),
+      "FBO Последняя миля, ₽": r.fbo.deliveryToPickup.toFixed(2),
       "FBO Эквайринг, ₽": r.fbo.acquiringFee.toFixed(2),
       "FBO Итого сборы, ₽": r.fbo.totalFees.toFixed(2),
       "FBO Прибыль, ₽": r.fbo.profit.toFixed(2),

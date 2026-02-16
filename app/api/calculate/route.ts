@@ -19,6 +19,7 @@ export async function POST(request: NextRequest) {
       pickupPointType,
       acceptanceType,
       deliveryToPickupPoint = 25,
+      lastMileFee = 25, // Последняя миля FBO (по умолчанию 25 ₽)
       productCost = 0,
       otherExpenses = 0,
       targetMargin, // Опциональная желаемая маржинальность от себестоимости (%)
@@ -292,8 +293,8 @@ export async function POST(request: NextRequest) {
     // ─── 6. ИТОГОВЫЕ РАСЧЁТЫ ────────────────────────────────────
     const totalCost = productCost + otherExpenses;
 
-    // FBO
-    const fboTotalFees = fboCommission + fboShipping.cost + acquiringFee;
+    // FBO (включая Последнюю милю)
+    const fboTotalFees = fboCommission + fboShipping.cost + lastMileFee + acquiringFee;
     const fboProfit = price - fboTotalFees - totalCost;
     const fboMargin = price > 0 ? Math.round(fboProfit / price * 10000) / 100 : 0;
 
@@ -365,7 +366,7 @@ export async function POST(request: NextRequest) {
       };
       
       // Фиксированные сборы для каждого типа
-      const fboFixedFees = fboShipping.cost;
+      const fboFixedFees = fboShipping.cost + lastMileFee;
       const fbsFixedFees = fbsShipping.cost + fbsDispatchFee + deliveryToPickupPoint;
       const rfbsFixedFees = 0;
       
@@ -407,6 +408,7 @@ export async function POST(request: NextRequest) {
           commissionAmount: fboCommission,
           shippingCost: fboShipping.cost,
           shippingDetails: fboShipping.tariffDetails,
+          lastMileFee: lastMileFee,
           processingFee: 0,
           processingDetails: "FBO — обработка включена",
           acquiringFee,

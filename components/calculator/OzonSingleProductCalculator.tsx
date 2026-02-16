@@ -17,6 +17,7 @@ interface FulfillmentResult {
   commissionAmount: number;
   shippingCost: number;
   shippingDetails: string;
+  lastMileFee?: number;
   processingFee: number;
   processingDetails: string;
   dispatchFee?: number;
@@ -119,6 +120,7 @@ export function OzonSingleProductCalculator() {
   const [pickupPointType, setPickupPointType] = useState<string>("");
   const [acceptanceType, setAcceptanceType] = useState<string>("");
   const [deliveryToPickupPoint, setDeliveryToPickupPoint] = useState<string>("25");
+  const [lastMileFee, setLastMileFee] = useState<string>("25");
 
   // Себестоимость
   const [costMode, setCostMode] = useState<"single" | "batch">("single");
@@ -375,7 +377,8 @@ export function OzonSingleProductCalculator() {
         volumeLiters: vol,
         pickupPointType: pickupPointType || undefined,
         acceptanceType: acceptanceType || undefined,
-        deliveryToPickupPoint: parseFloat(deliveryToPickupPoint) || 0,
+          deliveryToPickupPoint: parseFloat(deliveryToPickupPoint) || 0,
+          lastMileFee: parseFloat(lastMileFee) || 0,
         productCost: parseFloat(productCost) || 0,
         otherExpenses: parseFloat(otherExpenses) || 0,
       };
@@ -803,7 +806,7 @@ export function OzonSingleProductCalculator() {
 
           {/* Доставка до места выдачи */}
           <div className="space-y-2">
-            <Label htmlFor="deliveryToPickupPoint">Доставка до места выдачи, ₽</Label>
+            <Label htmlFor="deliveryToPickupPoint">Доставка до места выдачи (FBS), ₽</Label>
             <Input
               id="deliveryToPickupPoint"
               type="number"
@@ -815,6 +818,23 @@ export function OzonSingleProductCalculator() {
             />
             <p className="text-xs text-muted-foreground">
               Стоимость доставки товара до места выдачи (ПВЗ/ППЗ/СЦ). Прибавляется к расчёту FBS всегда.
+            </p>
+          </div>
+
+          {/* Последняя миля FBO */}
+          <div className="space-y-2">
+            <Label htmlFor="lastMileFee">Последняя миля (FBO), ₽</Label>
+            <Input
+              id="lastMileFee"
+              type="number"
+              step="0.01"
+              min="0"
+              value={lastMileFee}
+              onChange={(e) => setLastMileFee(e.target.value)}
+              placeholder="25"
+            />
+            <p className="text-xs text-muted-foreground">
+              Стоимость последней мили доставки FBO. Прибавляется к расчёту FBO всегда.
             </p>
           </div>
 
@@ -1104,6 +1124,18 @@ export function OzonSingleProductCalculator() {
                     <td className="text-right py-2.5 px-3 text-muted-foreground">
                       своя
                     </td>
+                  </tr>
+
+                  {/* Последняя миля FBO */}
+                  <tr className="border-b">
+                    <td className="py-2.5 px-3">
+                      Последняя миля (FBO)
+                    </td>
+                    <td className="text-right py-2.5 px-3 text-red-500">
+                      {calcResult.fbo.lastMileFee ? `−${fmtMoney(calcResult.fbo.lastMileFee)}` : "—"}
+                    </td>
+                    <td className="text-right py-2.5 px-3 text-muted-foreground">—</td>
+                    <td className="text-right py-2.5 px-3 text-muted-foreground">—</td>
                   </tr>
 
                   {/* Тариф за отправление FBS */}

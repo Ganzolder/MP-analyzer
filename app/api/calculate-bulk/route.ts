@@ -17,6 +17,7 @@ export async function POST(request: NextRequest) {
       pickupPointType = "pvz-ppz",
       acceptanceType = "employee",
       deliveryToPickupPoint = 25,
+      lastMileFee = 25, // Последняя миля FBO (по умолчанию 25 ₽)
     } = body;
 
     if (!Array.isArray(products) || products.length === 0) {
@@ -342,21 +343,22 @@ export async function POST(request: NextRequest) {
 
         // --- FBO ---
         // Сначала оцениваем цену, чтобы определить price band для логистики
-        const fboEstimate = computeRecommendedPrice(commission, "fbo", totalCost, targetMargin, 0);
+        const fboFixedBase = lastMileFee; // Последняя миля FBO
+        const fboEstimate = computeRecommendedPrice(commission, "fbo", totalCost, targetMargin, fboFixedBase);
         const fboPriceBand = fboEstimate <= 300 ? "up_to_300" : "over_300";
         const fboShipping = calculateShipping("fbo", volumeLiters, fboPriceBand);
-        // Пересчитываем с учётом логистики
-        const fboPrice = computeRecommendedPrice(commission, "fbo", totalCost, targetMargin, fboShipping);
+        // Пересчитываем с учётом логистики + последняя миля
+        const fboPrice = computeRecommendedPrice(commission, "fbo", totalCost, targetMargin, fboShipping + fboFixedBase);
         // Проверяем, не изменился ли price band
         const fboFinalBand = fboPrice <= 300 ? "up_to_300" : "over_300";
         const fboFinalShipping = fboFinalBand !== fboPriceBand
           ? calculateShipping("fbo", volumeLiters, fboFinalBand)
           : fboShipping;
         const fboFinalPrice = fboFinalBand !== fboPriceBand
-          ? computeRecommendedPrice(commission, "fbo", totalCost, targetMargin, fboFinalShipping)
+          ? computeRecommendedPrice(commission, "fbo", totalCost, targetMargin, fboFinalShipping + fboFixedBase)
           : fboPrice;
 
-        const fbo = calculateFulfillment(commission, "fbo", fboFinalPrice, fboFinalShipping, 0, 0, totalCost);
+        const fbo = calculateFulfillment(commission, "fbo", fboFinalPrice, fboFinalShipping, 0, lastMileFee, totalCost);
 
         // --- FBS ---
         const fbsFixedBase = fbsDispatchFee + deliveryToPickupPoint;
@@ -408,6 +410,7 @@ export async function POST(request: NextRequest) {
           errorProducts: results.filter((r) => r.error).length,
           acquiringPct,
           dispatchFee: fbsDispatchFee,
+          lastMileFee,
           pickupPointType,
           acceptanceType,
           deliveryToPickupPoint,

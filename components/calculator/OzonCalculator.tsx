@@ -36,6 +36,7 @@ export function OzonCalculator() {
   const [pickupPointType, setPickupPointType] = useState<string>("pvz-ppz");
   const [acceptanceType, setAcceptanceType] = useState<string>("employee");
   const [deliveryToPickupPoint, setDeliveryToPickupPoint] = useState<string>("25");
+  const [lastMileFee, setLastMileFee] = useState<string>("25");
 
   // Результаты массового расчёта
   const [bulkResults, setBulkResults] = useState<BulkCalcResult[] | null>(null);
@@ -193,6 +194,7 @@ export function OzonCalculator() {
           pickupPointType,
           acceptanceType,
           deliveryToPickupPoint: parseFloat(deliveryToPickupPoint) || 25,
+          lastMileFee: parseFloat(lastMileFee) || 25,
         }),
       });
 
@@ -454,13 +456,24 @@ export function OzonCalculator() {
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <Label>Доставка до ПВЗ, ₽</Label>
+                      <Label>Доставка до ПВЗ (FBS), ₽</Label>
                       <Input
                         type="number"
                         step="0.01"
                         min="0"
                         value={deliveryToPickupPoint}
                         onChange={(e) => setDeliveryToPickupPoint(e.target.value)}
+                        placeholder="25"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Последняя миля (FBO), ₽</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={lastMileFee}
+                        onChange={(e) => setLastMileFee(e.target.value)}
                         placeholder="25"
                       />
                     </div>
