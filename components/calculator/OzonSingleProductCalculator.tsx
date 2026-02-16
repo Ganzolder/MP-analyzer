@@ -130,6 +130,9 @@ export function OzonSingleProductCalculator() {
   // Желаемая маржинальность (опциональное поле)
   const [targetMargin, setTargetMargin] = useState<string>("");
 
+  // Налоговый режим
+  const [taxRegime, setTaxRegime] = useState<string>("none");
+
   // Поиск категорий
   const [categoryOptions, setCategoryOptions] = useState<CategoryOption[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -411,6 +414,50 @@ export function OzonSingleProductCalculator() {
 
   const fmtMoney = (v: number): string => {
     return v.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " ₽";
+  };
+
+  // ─── Расчёт налогов ──────────────────────────────────────────
+  const calculateTaxForFulfillment = (fulfillmentType: "fbo" | "fbs" | "rfbs") => {
+    if (!calcResult || taxRegime === "none") {
+      return { usnTax: 0, vatPayable: 0, profitTax: 0, totalTax: 0 };
+    }
+
+    const fulfillment = calcResult[fulfillmentType];
+    const accrual = calcResult.price - fulfillment.totalFees; // Начисление от Озон = Цена - все сборы
+    const cost = calcResult.productCost || 0;
+    const otherExp = calcResult.otherExpenses || 0;
+
+    if (taxRegime === "usn6") {
+      // УСН 6% от начислений (Цена - все сборы)
+      const usnTax = Math.round(accrual * 6 / 100 * 100) / 100;
+      return { usnTax, vatPayable: 0, profitTax: 0, totalTax: usnTax };
+    }
+
+    if (taxRegime === "usn15") {
+      // УСН 15% от (Цена - все сборы - себестоимость - прочие расходы)
+      const taxBase = accrual - cost - otherExp;
+      const usnTax = taxBase > 0 ? Math.round(taxBase * 15 / 100 * 100) / 100 : 0;
+      return { usnTax, vatPayable: 0, profitTax: 0, totalTax: usnTax };
+    }
+
+    if (taxRegime === "nds22") {
+      // НДС к уплате = (Цена - все сборы) * 22/122 - себестоимость * 22/122
+      const vatPayable = Math.round((accrual * 22 / 122 - cost * 22 / 122) * 100) / 100;
+
+      // Налог на прибыль 25%:
+      // База = Доходы (без НДС) − Расходы (без НДС)
+      // Доходы без НДС = (Цена - все сборы) * 100/122
+      // Расходы без НДС = себестоимость * 100/122 + прочие расходы
+      const incomeNoVat = accrual * 100 / 122;
+      const expensesNoVat = cost * 100 / 122 + otherExp;
+      const profitTaxBase = incomeNoVat - expensesNoVat;
+      const profitTax = profitTaxBase > 0 ? Math.round(profitTaxBase * 25 / 100 * 100) / 100 : 0;
+
+      const totalTax = (vatPayable > 0 ? vatPayable : 0) + profitTax;
+      return { usnTax: 0, vatPayable, profitTax, totalTax };
+    }
+
+    return { usnTax: 0, vatPayable: 0, profitTax: 0, totalTax: 0 };
   };
 
   return (
@@ -984,6 +1031,44 @@ export function OzonSingleProductCalculator() {
             </TabsContent>
           </Tabs>
 
+          {/* Налоговый режим */}
+          <div className="rounded-lg border bg-slate-50/50 dark:bg-slate-950/20 p-4 space-y-2">
+            <div className="flex items-center gap-2">
+              <Label htmlFor="taxRegime" className="text-sm font-semibold">
+                Налоговый режим
+              </Label>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Info className="h-4 w-4 text-muted-foreground cursor-help" />
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-sm">
+                    <p className="text-xs">
+                      <strong>Без налога (0%)</strong> — расчёт без учёта налогов.<br />
+                      <strong>УСН Доходы (6%)</strong> — 6% от начислений Озон (Цена − все сборы).<br />
+                      <strong>УСН Доходы−Расходы (15%)</strong> — 15% от (начисления − себестоимость − прочие расходы).<br />
+                      <strong>НДС 22%</strong> — НДС к уплате + налог на прибыль 25%.
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+            <Select value={taxRegime} onValueChange={setTaxRegime}>
+              <SelectTrigger id="taxRegime" className="bg-white dark:bg-background">
+                <SelectValue placeholder="Выберите налоговый режим" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Без налога (0%)</SelectItem>
+                <SelectItem value="usn6">УСН Доходы (6%)</SelectItem>
+                <SelectItem value="usn15">УСН Доходы−Расходы (15%)</SelectItem>
+                <SelectItem value="nds22">НДС 22% + Налог на прибыль 25%</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Необязательное поле. Налоги учитываются при расчёте итоговой прибыли.
+            </p>
+          </div>
+
           {/* Желаемая маржинальность */}
           <div className="rounded-lg border bg-amber-50/50 dark:bg-amber-950/20 p-4 space-y-2">
             <div className="flex items-center gap-2">
@@ -1203,9 +1288,11 @@ export function OzonSingleProductCalculator() {
                     <td className="text-right py-2.5 px-3 font-bold text-red-600">−{fmtMoney(calcResult.rfbs.totalFees + calcResult.totalCost)}</td>
                   </tr>
 
-                  {/* Прибыль */}
-                  <tr className="bg-muted/30">
-                    <td className="py-3 px-3 font-bold text-base">Прибыль</td>
+                  {/* Прибыль до налогов */}
+                  <tr className={taxRegime !== "none" ? "bg-muted/10" : "bg-muted/30"}>
+                    <td className="py-3 px-3 font-bold text-base">
+                      {taxRegime !== "none" ? "Прибыль до налогов" : "Прибыль"}
+                    </td>
                     <td className={`text-right py-3 px-3 font-bold text-base ${calcResult.fbo.profit >= 0 ? "text-green-600" : "text-red-600"}`}>
                       {calcResult.fbo.profit >= 0 ? "+" : ""}{fmtMoney(calcResult.fbo.profit)}
                     </td>
@@ -1217,7 +1304,169 @@ export function OzonSingleProductCalculator() {
                     </td>
                   </tr>
 
-                  {/* Маржинальность */}
+                  {/* ═══ НАЛОГИ ═══ */}
+                  {taxRegime !== "none" && (() => {
+                    const fboTax = calculateTaxForFulfillment("fbo");
+                    const fbsTax = calculateTaxForFulfillment("fbs");
+                    const rfbsTax = calculateTaxForFulfillment("rfbs");
+
+                    const fboNetProfit = Math.round((calcResult.fbo.profit - fboTax.totalTax) * 100) / 100;
+                    const fbsNetProfit = Math.round((calcResult.fbs.profit - fbsTax.totalTax) * 100) / 100;
+                    const rfbsNetProfit = Math.round((calcResult.rfbs.profit - rfbsTax.totalTax) * 100) / 100;
+
+                    const fboNetMargin = calcResult.price > 0 ? Math.round(fboNetProfit / calcResult.price * 10000) / 100 : 0;
+                    const fbsNetMargin = calcResult.price > 0 ? Math.round(fbsNetProfit / calcResult.price * 10000) / 100 : 0;
+                    const rfbsNetMargin = calcResult.price > 0 ? Math.round(rfbsNetProfit / calcResult.price * 10000) / 100 : 0;
+
+                    return (
+                      <>
+                        {/* УСН 6% */}
+                        {taxRegime === "usn6" && (
+                          <tr className="border-b bg-orange-50/30 dark:bg-orange-950/10">
+                            <td className="py-2.5 px-3">
+                              Налог УСН 6%
+                              <span className="text-xs text-muted-foreground ml-1">(от начислений)</span>
+                            </td>
+                            <td className="text-right py-2.5 px-3 text-orange-600">−{fmtMoney(fboTax.usnTax)}</td>
+                            <td className="text-right py-2.5 px-3 text-orange-600">−{fmtMoney(fbsTax.usnTax)}</td>
+                            <td className="text-right py-2.5 px-3 text-orange-600">−{fmtMoney(rfbsTax.usnTax)}</td>
+                          </tr>
+                        )}
+
+                        {/* УСН 15% */}
+                        {taxRegime === "usn15" && (
+                          <tr className="border-b bg-orange-50/30 dark:bg-orange-950/10">
+                            <td className="py-2.5 px-3">
+                              Налог УСН 15%
+                              <span className="text-xs text-muted-foreground ml-1">(доходы − расходы)</span>
+                            </td>
+                            <td className="text-right py-2.5 px-3 text-orange-600">−{fmtMoney(fboTax.usnTax)}</td>
+                            <td className="text-right py-2.5 px-3 text-orange-600">−{fmtMoney(fbsTax.usnTax)}</td>
+                            <td className="text-right py-2.5 px-3 text-orange-600">−{fmtMoney(rfbsTax.usnTax)}</td>
+                          </tr>
+                        )}
+
+                        {/* НДС 22% + Налог на прибыль 25% */}
+                        {taxRegime === "nds22" && (
+                          <>
+                            <tr className="border-b bg-orange-50/30 dark:bg-orange-950/10">
+                              <td className="py-2.5 px-3">
+                                НДС к уплате
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Info className="h-3.5 w-3.5 text-muted-foreground inline ml-1 cursor-help" />
+                                    </TooltipTrigger>
+                                    <TooltipContent side="right" className="max-w-sm">
+                                      <p className="text-xs">
+                                        НДС = (Цена − сборы) × 22/122 − Себестоимость × 22/122
+                                      </p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              </td>
+                              <td className="text-right py-2.5 px-3 text-orange-600">
+                                {fboTax.vatPayable > 0 ? `−${fmtMoney(fboTax.vatPayable)}` : fmtMoney(fboTax.vatPayable)}
+                              </td>
+                              <td className="text-right py-2.5 px-3 text-orange-600">
+                                {fbsTax.vatPayable > 0 ? `−${fmtMoney(fbsTax.vatPayable)}` : fmtMoney(fbsTax.vatPayable)}
+                              </td>
+                              <td className="text-right py-2.5 px-3 text-orange-600">
+                                {rfbsTax.vatPayable > 0 ? `−${fmtMoney(rfbsTax.vatPayable)}` : fmtMoney(rfbsTax.vatPayable)}
+                              </td>
+                            </tr>
+                            <tr className="border-b bg-orange-50/30 dark:bg-orange-950/10">
+                              <td className="py-2.5 px-3">
+                                Налог на прибыль 25%
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Info className="h-3.5 w-3.5 text-muted-foreground inline ml-1 cursor-help" />
+                                    </TooltipTrigger>
+                                    <TooltipContent side="right" className="max-w-sm">
+                                      <p className="text-xs">
+                                        База = Доходы (без НДС) − Расходы (без НДС)<br />
+                                        Налог = База × 25%
+                                      </p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              </td>
+                              <td className="text-right py-2.5 px-3 text-orange-600">−{fmtMoney(fboTax.profitTax)}</td>
+                              <td className="text-right py-2.5 px-3 text-orange-600">−{fmtMoney(fbsTax.profitTax)}</td>
+                              <td className="text-right py-2.5 px-3 text-orange-600">−{fmtMoney(rfbsTax.profitTax)}</td>
+                            </tr>
+                          </>
+                        )}
+
+                        {/* Чистая прибыль (после налогов) */}
+                        <tr className="bg-muted/30 border-t-2">
+                          <td className="py-3 px-3 font-bold text-base">
+                            Чистая прибыль
+                            <span className="text-xs font-normal text-muted-foreground ml-1">
+                              (после {taxRegime === "usn6" ? "УСН 6%" : taxRegime === "usn15" ? "УСН 15%" : "НДС + прибыль"})
+                            </span>
+                          </td>
+                          <td className={`text-right py-3 px-3 font-bold text-base ${fboNetProfit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                            {fboNetProfit >= 0 ? "+" : ""}{fmtMoney(fboNetProfit)}
+                          </td>
+                          <td className={`text-right py-3 px-3 font-bold text-base ${fbsNetProfit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                            {fbsNetProfit >= 0 ? "+" : ""}{fmtMoney(fbsNetProfit)}
+                          </td>
+                          <td className={`text-right py-3 px-3 font-bold text-base ${rfbsNetProfit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                            {rfbsNetProfit >= 0 ? "+" : ""}{fmtMoney(rfbsNetProfit)}
+                          </td>
+                        </tr>
+
+                        {/* Маржинальность после налогов */}
+                        <tr className="border-t">
+                          <td className="py-3 px-3 font-medium">
+                            Маржинальность
+                            <span className="text-xs text-muted-foreground ml-1">(чистая)</span>
+                          </td>
+                          <td className="text-right py-3 px-3">
+                            <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
+                              fboNetMargin >= 20
+                                ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400"
+                                : fboNetMargin >= 0
+                                  ? "bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400"
+                                  : "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400"
+                            }`}>
+                              {fboNetMargin >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+                              {fboNetMargin}%
+                            </div>
+                          </td>
+                          <td className="text-right py-3 px-3">
+                            <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
+                              fbsNetMargin >= 20
+                                ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400"
+                                : fbsNetMargin >= 0
+                                  ? "bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400"
+                                  : "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400"
+                            }`}>
+                              {fbsNetMargin >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+                              {fbsNetMargin}%
+                            </div>
+                          </td>
+                          <td className="text-right py-3 px-3">
+                            <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
+                              rfbsNetMargin >= 20
+                                ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400"
+                                : rfbsNetMargin >= 0
+                                  ? "bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400"
+                                  : "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400"
+                            }`}>
+                              {rfbsNetMargin >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+                              {rfbsNetMargin}%
+                            </div>
+                          </td>
+                        </tr>
+                      </>
+                    );
+                  })()}
+
+                  {/* Маржинальность (без налогов или когда налог не выбран) */}
+                  {taxRegime === "none" && (
                   <tr className="border-t">
                     <td className="py-3 px-3 font-medium">Маржинальность</td>
                     <td className="text-right py-3 px-3">
@@ -1257,6 +1506,7 @@ export function OzonSingleProductCalculator() {
                       </div>
                     </td>
                   </tr>
+                  )}
 
                   {/* Маржинальность от себестоимости (если есть обратный расчёт) */}
                   {calcResult.reverseCalculation && (
