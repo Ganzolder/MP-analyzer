@@ -82,6 +82,34 @@ function parseString(value: any): string {
 }
 
 /**
+ * Извлекает текстовое значение ячейки из worksheet, сохраняя исходный формат.
+ * Это критично для артикулов: Excel может хранить "00123" как число 123,
+ * а большие числа теряют точность при конвертации Number → String.
+ * Используем свойство `w` (formatted text) ячейки, если доступно.
+ */
+function getRawCellText(worksheet: XLSX.WorkSheet, row: number, col: number): string {
+  const cellAddress = XLSX.utils.encode_cell({ r: row, c: col });
+  const cell = worksheet[cellAddress];
+  if (!cell) return "";
+  // Если есть отформатированный текст (w) — используем его
+  if (cell.w !== undefined && cell.w !== null) {
+    return String(cell.w).trim();
+  }
+  // Если значение — строка, возвращаем как есть
+  if (cell.t === "s" && cell.v !== undefined) {
+    return String(cell.v).trim();
+  }
+  // Для чисел — возвращаем точное представление
+  if (cell.v !== undefined && cell.v !== null) {
+    return String(cell.v).trim();
+  }
+  return "";
+}
+
+/** Максимальное количество строк для массового расчёта */
+const MAX_ROWS_LIMIT = 10000;
+
+/**
  * Парсит файл Excel для калькулятора Озона
  * Поддерживает как габариты (ширина/высота/длина в мм), так и прямой объём (л)
  */
@@ -107,6 +135,16 @@ export async function parseOzonFile(file: File): Promise<ParsedFileResult> {
         products: [],
         categories: [],
         errors: ["Файл пуст или содержит только заголовки"],
+      };
+    }
+
+    // Проверяем лимит строк (без учёта заголовка)
+    const dataRowsCount = data.length - 1;
+    if (dataRowsCount > MAX_ROWS_LIMIT) {
+      return {
+        products: [],
+        categories: [],
+        errors: [`Файл содержит ${dataRowsCount} строк данных. Максимально допустимое количество: ${MAX_ROWS_LIMIT.toLocaleString("ru-RU")}. Пожалуйста, разбейте файл на части.`],
       };
     }
 
@@ -160,7 +198,9 @@ export async function parseOzonFile(file: File): Promise<ParsedFileResult> {
       }
 
       const category = parseString(row[categoryIdx]);
-      const article = parseString(row[articleIdx]);
+      // Для артикула используем getRawCellText, чтобы сохранить исходный формат
+      // (ведущие нули, большие числа без потери точности)
+      const article = getRawCellText(worksheet, i, articleIdx);
       const name = parseString(row[nameIdx]);
       const cost = parseNumber(row[costIdx]);
       const marginPercent = marginIdx !== -1 ? parseNumber(row[marginIdx]) : null;
