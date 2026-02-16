@@ -26,9 +26,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (products.length > 5000) {
+    if (products.length > 10000) {
       return NextResponse.json(
-        { success: false, error: "Максимум 5000 товаров за один расчёт" },
+        { success: false, error: "Максимум 10 000 товаров за один расчёт" },
         { status: 400 }
       );
     }
