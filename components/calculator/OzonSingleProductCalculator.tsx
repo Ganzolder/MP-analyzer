@@ -26,14 +26,16 @@ interface FulfillmentResult {
   acquiringFee: number;
   totalFees: number;
   profit: number;
-  margin: number;
+  margin: number; // маржинальность (от цены)
+  markup: number; // наценка (от себестоимости)
 }
 
 interface ReverseCalcResult {
   targetMargin: number;
-  fbo: { requiredPrice: number; currentMarginFromCost: number };
-  fbs: { requiredPrice: number; currentMarginFromCost: number };
-  rfbs: { requiredPrice: number; currentMarginFromCost: number };
+  marginMode: string; // "markup" | "margin"
+  fbo: { requiredPrice: number; currentMarkupFromCost: number };
+  fbs: { requiredPrice: number; currentMarkupFromCost: number };
+  rfbs: { requiredPrice: number; currentMarkupFromCost: number };
 }
 
 interface CalcResult {
@@ -130,8 +132,9 @@ export function OzonSingleProductCalculator() {
   const [productCost, setProductCost] = useState<string>("");
   const [otherExpenses, setOtherExpenses] = useState<string>("");
 
-  // Желаемая маржинальность (опциональное поле)
+  // Желаемая наценка / маржинальность (опциональное поле)
   const [targetMargin, setTargetMargin] = useState<string>("");
+  const [marginMode, setMarginMode] = useState<"markup" | "margin">("markup");
 
   // Налоговый режим
   const [taxRegime, setTaxRegime] = useState<string>("none");
@@ -400,10 +403,11 @@ export function OzonSingleProductCalculator() {
         otherExpenses: parseFloat(otherExpenses) || 0,
       };
 
-      // Если указана желаемая маржинальность — добавляем
+      // Если указана желаемая наценка/маржинальность — добавляем
       const marginNum = parseFloat(targetMargin.replace(/\s/g, ""));
       if (!isNaN(marginNum) && marginNum >= 0) {
         requestBody.targetMargin = marginNum;
+        requestBody.marginMode = marginMode;
       }
 
       const response = await fetch("/api/calculate", {
@@ -1002,10 +1006,10 @@ export function OzonSingleProductCalculator() {
         </CardContent>
       </Card>
 
-      {/* Себестоимость и маржинальность */}
+      {/* Себестоимость и наценка / маржинальность */}
       <Card>
         <CardHeader>
-          <CardTitle>Себестоимость и маржинальность</CardTitle>
+          <CardTitle>Себестоимость и ценообразование</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <Tabs value={costMode} onValueChange={(v) => setCostMode(v as "single" | "batch")}>
@@ -1106,12 +1110,12 @@ export function OzonSingleProductCalculator() {
             </p>
           </div>
 
-          {/* Желаемая маржинальность */}
-          <div className="rounded-lg border bg-amber-50/50 dark:bg-amber-950/20 p-4 space-y-2">
+          {/* Желаемая наценка / маржинальность */}
+          <div className="rounded-lg border bg-amber-50/50 dark:bg-amber-950/20 p-4 space-y-3">
             <div className="flex items-center gap-2">
               <Target className="h-4 w-4 text-amber-600" />
-              <Label htmlFor="targetMargin" className="text-sm font-semibold text-amber-800 dark:text-amber-300">
-                Желаемая маржинальность от себестоимости, %
+              <Label className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                Целевой расчёт цены
               </Label>
               <TooltipProvider>
                 <Tooltip>
@@ -1121,12 +1125,24 @@ export function OzonSingleProductCalculator() {
                   <TooltipContent className="max-w-xs">
                     <p>
                       Если заполнено — калькулятор покажет рекомендуемую цену для каждого типа
-                      отгрузки, при которой ваша маржа от себестоимости будет равна указанному %.
+                      отгрузки, при которой ваш показатель будет равен указанному %.
                     </p>
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
             </div>
+
+            {/* Переключатель режима */}
+            <Select value={marginMode} onValueChange={(v) => setMarginMode(v as "markup" | "margin")}>
+              <SelectTrigger className="bg-white dark:bg-background">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="markup">Наценка — (Цена − Себестоимость) / Себестоимость × 100%</SelectItem>
+                <SelectItem value="margin">Маржинальность — (Цена − Себестоимость) / Цена × 100%</SelectItem>
+              </SelectContent>
+            </Select>
+
             <Input
               id="targetMargin"
               type="text"
@@ -1141,7 +1157,10 @@ export function OzonSingleProductCalculator() {
               className="bg-white dark:bg-background"
             />
             <p className="text-xs text-muted-foreground">
-              Необязательное поле. Если указано — в результатах появится строка с рекомендуемой ценой.
+              {marginMode === "markup"
+                ? "Наценка рассчитывается от себестоимости: какой % добавить сверх себестоимости."
+                : "Маржинальность рассчитывается от цены: какую долю цены составляет прибыль."}
+              {" "}Необязательное поле. Если указано — в результатах появится строка с рекомендуемой ценой.
             </p>
           </div>
         </CardContent>
@@ -1475,11 +1494,11 @@ export function OzonSingleProductCalculator() {
                           </td>
                         </tr>
 
-                        {/* Маржинальность после налогов */}
+                        {/* Маржинальность после налогов (от цены) */}
                         <tr className="border-t">
                           <td className="py-3 px-3 font-medium">
                             Маржинальность
-                            <span className="text-xs text-muted-foreground ml-1">(чистая)</span>
+                            <span className="text-xs text-muted-foreground ml-1">(чистая, от цены)</span>
                           </td>
                           <td className="text-right py-3 px-3">
                             <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
@@ -1522,10 +1541,13 @@ export function OzonSingleProductCalculator() {
                     );
                   })()}
 
-                  {/* Маржинальность (без налогов или когда налог не выбран) */}
+                  {/* Маржинальность (от цены) — без налогов или когда налог не выбран */}
                   {taxRegime === "none" && (
                   <tr className="border-t">
-                    <td className="py-3 px-3 font-medium">Маржинальность</td>
+                    <td className="py-3 px-3 font-medium">
+                      Маржинальность
+                      <span className="text-xs font-normal text-muted-foreground ml-1">(от цены)</span>
+                    </td>
                     <td className="text-right py-3 px-3">
                       <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
                         calcResult.fbo.margin >= 20
@@ -1565,11 +1587,36 @@ export function OzonSingleProductCalculator() {
                   </tr>
                   )}
 
-                  {/* Маржинальность от себестоимости (если есть обратный расчёт) */}
+                  {/* Наценка (от себестоимости) */}
+                  {taxRegime === "none" && calcResult.totalCost > 0 && (
+                  <tr className="border-t">
+                    <td className="py-3 px-3 font-medium">
+                      Наценка
+                      <span className="text-xs font-normal text-muted-foreground ml-1">(от себестоимости)</span>
+                    </td>
+                    <td className="text-right py-3 px-3">
+                      <span className={`font-bold ${calcResult.fbo.markup >= 0 ? "text-green-600" : "text-red-600"}`}>
+                        {calcResult.fbo.markup}%
+                      </span>
+                    </td>
+                    <td className="text-right py-3 px-3">
+                      <span className={`font-bold ${calcResult.fbs.markup >= 0 ? "text-green-600" : "text-red-600"}`}>
+                        {calcResult.fbs.markup}%
+                      </span>
+                    </td>
+                    <td className="text-right py-3 px-3">
+                      <span className={`font-bold ${calcResult.rfbs.markup >= 0 ? "text-green-600" : "text-red-600"}`}>
+                        {calcResult.rfbs.markup}%
+                      </span>
+                    </td>
+                  </tr>
+                  )}
+
+                  {/* Наценка от себестоимости (текущая, при обратном расчёте) */}
                   {calcResult.reverseCalculation && (
                     <tr className="border-t">
                       <td className="py-3 px-3 font-medium">
-                        Маржа от себестоимости
+                        Текущая наценка
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
@@ -1578,25 +1625,25 @@ export function OzonSingleProductCalculator() {
                             <TooltipContent className="max-w-xs">
                               <p className="text-xs">
                                 Прибыль / Себестоимость × 100%. 
-                                Показывает, какой процент от себестоимости составляет ваша прибыль.
+                                Показывает, какой процент от себестоимости составляет ваша прибыль при текущей цене.
                               </p>
                             </TooltipContent>
                           </Tooltip>
                         </TooltipProvider>
                       </td>
                       <td className="text-right py-3 px-3">
-                        <span className={`font-bold ${calcResult.reverseCalculation.fbo.currentMarginFromCost >= 0 ? "text-green-600" : "text-red-600"}`}>
-                          {calcResult.reverseCalculation.fbo.currentMarginFromCost}%
+                        <span className={`font-bold ${calcResult.reverseCalculation.fbo.currentMarkupFromCost >= 0 ? "text-green-600" : "text-red-600"}`}>
+                          {calcResult.reverseCalculation.fbo.currentMarkupFromCost}%
                         </span>
                       </td>
                       <td className="text-right py-3 px-3">
-                        <span className={`font-bold ${calcResult.reverseCalculation.fbs.currentMarginFromCost >= 0 ? "text-green-600" : "text-red-600"}`}>
-                          {calcResult.reverseCalculation.fbs.currentMarginFromCost}%
+                        <span className={`font-bold ${calcResult.reverseCalculation.fbs.currentMarkupFromCost >= 0 ? "text-green-600" : "text-red-600"}`}>
+                          {calcResult.reverseCalculation.fbs.currentMarkupFromCost}%
                         </span>
                       </td>
                       <td className="text-right py-3 px-3">
-                        <span className={`font-bold ${calcResult.reverseCalculation.rfbs.currentMarginFromCost >= 0 ? "text-green-600" : "text-red-600"}`}>
-                          {calcResult.reverseCalculation.rfbs.currentMarginFromCost}%
+                        <span className={`font-bold ${calcResult.reverseCalculation.rfbs.currentMarkupFromCost >= 0 ? "text-green-600" : "text-red-600"}`}>
+                          {calcResult.reverseCalculation.rfbs.currentMarkupFromCost}%
                         </span>
                       </td>
                     </tr>
@@ -1608,10 +1655,10 @@ export function OzonSingleProductCalculator() {
                       <td className="py-3 px-3 font-bold text-amber-800 dark:text-amber-300">
                         <div className="flex items-center gap-1.5">
                           <Target className="h-4 w-4" />
-                          Цена при марже {calcResult.reverseCalculation.targetMargin}%
+                          Цена при {calcResult.reverseCalculation.marginMode === "margin" ? "маржинальности" : "наценке"} {calcResult.reverseCalculation.targetMargin}%
                         </div>
                         <span className="text-xs font-normal text-muted-foreground">
-                          от себестоимости
+                          {calcResult.reverseCalculation.marginMode === "margin" ? "от цены продажи" : "от себестоимости"}
                         </span>
                       </td>
                       <td className="text-right py-3 px-3">

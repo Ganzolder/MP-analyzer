@@ -21,11 +21,17 @@ export interface OzonProductData {
 }
 
 /**
- * Настройки маржинальности
+ * Режим расчёта: "markup" = наценка (от себестоимости), "margin" = маржинальность (от цены)
+ */
+export type MarginMode = "markup" | "margin";
+
+/**
+ * Настройки маржинальности / наценки
  */
 export interface MarginSettings {
-  global: number;                // Общая маржинальность (%)
-  byCategory: Record<string, number>; // Маржинальность по категориям (%)
+  global: number;                // Общая наценка / маржинальность (%)
+  mode: MarginMode;             // Режим расчёта
+  byCategory: Record<string, number>; // По категориям (%)
 }
 
 /**
@@ -69,7 +75,8 @@ export interface BulkCalcFulfillment {
   acquiringFee: number;
   totalFees: number;
   profit: number;
-  marginPct: number; // от цены продажи
+  marginPct: number; // маржинальность (от цены продажи)
+  markupPct: number; // наценка (от себестоимости)
 }
 
 /**

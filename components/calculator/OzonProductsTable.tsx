@@ -86,7 +86,7 @@ export function OzonProductsTable({ products }: OzonProductsTableProps) {
                       Себестоимость
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                      Маржинальность
+                      Нац./Маржа
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">
                       Ширина (мм)

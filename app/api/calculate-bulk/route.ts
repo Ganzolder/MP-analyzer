@@ -18,6 +18,7 @@ export async function POST(request: NextRequest) {
       acceptanceType = "employee",
       deliveryToPickupPoint, // из БД если не передан
       lastMileFee, // из БД если не передан
+      marginMode = "markup", // "markup" = наценка, "margin" = маржинальность
     } = body;
 
     if (!Array.isArray(products) || products.length === 0) {
@@ -258,6 +259,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Алгебраический расчёт рекомендуемой цены
+    // marginMode: "markup" = наценка (от себестоимости), "margin" = маржинальность (от цены)
+    const isMarginMode = marginMode === "margin";
+
     function computeRecommendedPrice(
       commission: typeof allCommissions[0] | null,
       fulfillment: "fbo" | "fbs" | "rfbs",
@@ -265,7 +269,8 @@ export async function POST(request: NextRequest) {
       targetMargin: number,
       fixedFees: number
     ): number {
-      const desiredProfit = totalCost * targetMargin / 100;
+      const desiredProfit = isMarginMode ? 0 : totalCost * targetMargin / 100;
+      const marginFraction = isMarginMode ? targetMargin / 100 : 0;
 
       // Ценовые диапазоны комиссий
       type Bracket = { maxPrice: number; pct: number };
@@ -302,8 +307,19 @@ export async function POST(request: NextRequest) {
 
       for (const bracket of brackets) {
         const pctRate = (bracket.pct + acquiringPct) / 100;
-        if (pctRate >= 1) continue;
-        const requiredPrice = (totalCost + desiredProfit + fixedFees) / (1 - pctRate);
+        let requiredPrice: number;
+
+        if (isMarginMode) {
+          // Маржинальность: price = (totalCost + fixedFees) / (1 - pctRate - margin/100)
+          const denominator = 1 - pctRate - marginFraction;
+          if (denominator <= 0) continue;
+          requiredPrice = (totalCost + fixedFees) / denominator;
+        } else {
+          // Наценка: price = (totalCost + desiredProfit + fixedFees) / (1 - pctRate)
+          if (pctRate >= 1) continue;
+          requiredPrice = (totalCost + desiredProfit + fixedFees) / (1 - pctRate);
+        }
+
         if (requiredPrice <= bracket.maxPrice) {
           return Math.round(requiredPrice * 100) / 100;
         }
@@ -312,8 +328,14 @@ export async function POST(request: NextRequest) {
       // Fallback — последний диапазон
       const last = brackets[brackets.length - 1];
       const pctRate = (last.pct + acquiringPct) / 100;
-      if (pctRate >= 1) return 0;
-      return Math.round((totalCost + desiredProfit + fixedFees) / (1 - pctRate) * 100) / 100;
+      if (isMarginMode) {
+        const denominator = 1 - pctRate - marginFraction;
+        if (denominator <= 0) return 0;
+        return Math.round((totalCost + fixedFees) / denominator * 100) / 100;
+      } else {
+        if (pctRate >= 1) return 0;
+        return Math.round((totalCost + desiredProfit + fixedFees) / (1 - pctRate) * 100) / 100;
+      }
     }
 
     // Полный расчёт для одного типа отгрузки при заданной цене
@@ -331,7 +353,8 @@ export async function POST(request: NextRequest) {
       const acqFee = Math.round(price * acquiringPct / 100 * 100) / 100;
       const totalFees = commAmount + shippingCost + dispatchFee + deliveryFee + acqFee;
       const profit = Math.round((price - totalFees - totalCost) * 100) / 100;
-      const marginPct = price > 0 ? Math.round(profit / price * 10000) / 100 : 0;
+      const marginPct = price > 0 ? Math.round(profit / price * 10000) / 100 : 0; // маржинальность
+      const markupPct = totalCost > 0 ? Math.round(profit / totalCost * 10000) / 100 : 0; // наценка
 
       return {
         recommendedPrice: price,
@@ -344,6 +367,7 @@ export async function POST(request: NextRequest) {
         totalFees: Math.round(totalFees * 100) / 100,
         profit,
         marginPct,
+        markupPct,
       };
     }
 
@@ -456,6 +480,7 @@ export async function POST(request: NextRequest) {
           pickupPointType,
           acceptanceType,
           deliveryToPickupPoint: resolvedDeliveryToPickupPoint,
+          marginMode,
         },
       },
     });
@@ -480,5 +505,6 @@ function emptyFulfillment(): BulkCalcFulfillment {
     totalFees: 0,
     profit: 0,
     marginPct: 0,
+    markupPct: 0,
   };
 }

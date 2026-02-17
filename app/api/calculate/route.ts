@@ -23,7 +23,8 @@ export async function POST(request: NextRequest) {
       rfbsLogisticsCost = 0, // стоимость логистики RFBS
       productCost = 0,
       otherExpenses = 0,
-      targetMargin, // Опциональная желаемая маржинальность от себестоимости (%)
+      targetMargin, // Опциональная желаемая наценка/маржинальность (%)
+      marginMode = "markup", // "markup" = наценка (от себестоимости), "margin" = маржинальность (от цены)
     } = body;
 
     // Цена обязательна
@@ -339,17 +340,20 @@ export async function POST(request: NextRequest) {
     // FBO (включая Последнюю милю)
     const fboTotalFees = fboCommission + fboShipping.cost + resolvedLastMileFee + acquiringFee;
     const fboProfit = price - fboTotalFees - totalCost;
-    const fboMargin = price > 0 ? Math.round(fboProfit / price * 10000) / 100 : 0;
+    const fboMargin = price > 0 ? Math.round(fboProfit / price * 10000) / 100 : 0; // маржинальность
+    const fboMarkup = totalCost > 0 ? Math.round(fboProfit / totalCost * 10000) / 100 : 0; // наценка
 
     // FBS
     const fbsTotalFees = fbsCommission + fbsShipping.cost + fbsDispatchFee + resolvedDeliveryToPickupPoint + acquiringFee;
     const fbsProfit = price - fbsTotalFees - totalCost;
-    const fbsMargin = price > 0 ? Math.round(fbsProfit / price * 10000) / 100 : 0;
+    const fbsMargin = price > 0 ? Math.round(fbsProfit / price * 10000) / 100 : 0; // маржинальность
+    const fbsMarkup = totalCost > 0 ? Math.round(fbsProfit / totalCost * 10000) / 100 : 0; // наценка
 
     // RFBS (+ логистика RFBS если указана)
     const rfbsTotalFees = rfbsCommission + rfbsLogisticsCost + acquiringFee;
     const rfbsProfit = price - rfbsTotalFees - totalCost;
-    const rfbsMargin = price > 0 ? Math.round(rfbsProfit / price * 10000) / 100 : 0;
+    const rfbsMargin = price > 0 ? Math.round(rfbsProfit / price * 10000) / 100 : 0; // маржинальность
+    const rfbsMarkup = totalCost > 0 ? Math.round(rfbsProfit / totalCost * 10000) / 100 : 0; // наценка
 
     // ─── 7. ОБРАТНЫЙ РАСЧЁТ (АЛГЕБРАИЧЕСКИЙ) ─────────────────────
     // Если указана целевая маржинальность И себестоимость > 0,
@@ -357,17 +361,20 @@ export async function POST(request: NextRequest) {
     let reverseCalculation: any = null;
     
     if (targetMargin !== undefined && targetMargin !== null && totalCost > 0) {
-      const desiredProfit = totalCost * targetMargin / 100;
+      // Формулы:
+      // Наценка (markup): desiredProfit = totalCost * targetMargin / 100
+      //   price = (totalCost + desiredProfit + fixedFees) / (1 - pctRate)
+      // Маржинальность (margin): profit = price * targetMargin / 100
+      //   price = (totalCost + fixedFees) / (1 - pctRate - targetMargin / 100)
       
-      // Формула: price = (totalCost + desiredProfit + fixedFees) / (1 - percentRate)
-      // percentRate = (commissionPct + acquiringPct) / 100
-      // fixedFees — фиксированные сборы (логистика, отправление, доставка до ПВЗ)
+      const isMarginMode = marginMode === "margin";
+      const desiredProfit = isMarginMode ? 0 : totalCost * targetMargin / 100;
+      const marginFraction = isMarginMode ? targetMargin / 100 : 0;
       
       const computeRequiredPrice = (
         fulfillment: "fbo" | "fbs" | "rfbs",
         fixedFees: number
       ): number => {
-        // Пробуем каждый ценовой диапазон и проверяем, попадает ли результат
         const brackets: { maxPrice: number; pct: number }[] = [];
         
         if (fulfillment === "rfbs") {
@@ -386,7 +393,6 @@ export async function POST(request: NextRequest) {
             { maxPrice: Infinity, pct: fboC[4] },
           );
         } else {
-          // fbs: 3 уровня → расширяем до 5 с каскадом
           const fbsC = cascadeFill([
             commissionRecord?.fbsUpTo100, commissionRecord?.fbs100To300,
             commissionRecord?.fbsOver300, null, null,
@@ -402,21 +408,35 @@ export async function POST(request: NextRequest) {
         
         for (const bracket of brackets) {
           const pctRate = (bracket.pct + acquiringPct) / 100;
-          if (pctRate >= 1) continue; // невозможно — комиссия ≥ 100%
+          let requiredPrice: number;
           
-          const requiredPrice = (totalCost + desiredProfit + fixedFees) / (1 - pctRate);
+          if (isMarginMode) {
+            // Маржинальность: price = (totalCost + fixedFees) / (1 - pctRate - margin/100)
+            const denominator = 1 - pctRate - marginFraction;
+            if (denominator <= 0) continue;
+            requiredPrice = (totalCost + fixedFees) / denominator;
+          } else {
+            // Наценка: price = (totalCost + desiredProfit + fixedFees) / (1 - pctRate)
+            if (pctRate >= 1) continue;
+            requiredPrice = (totalCost + desiredProfit + fixedFees) / (1 - pctRate);
+          }
           
-          // Проверяем, попадает ли цена в этот ценовой диапазон
           if (requiredPrice <= bracket.maxPrice) {
             return Math.round(requiredPrice * 100) / 100;
           }
         }
         
-        // Fallback — используем последний диапазон
+        // Fallback — последний диапазон
         const lastBracket = brackets[brackets.length - 1];
         const pctRate = (lastBracket.pct + acquiringPct) / 100;
-        if (pctRate >= 1) return 0;
-        return Math.round((totalCost + desiredProfit + fixedFees) / (1 - pctRate) * 100) / 100;
+        if (isMarginMode) {
+          const denominator = 1 - pctRate - marginFraction;
+          if (denominator <= 0) return 0;
+          return Math.round((totalCost + fixedFees) / denominator * 100) / 100;
+        } else {
+          if (pctRate >= 1) return 0;
+          return Math.round((totalCost + desiredProfit + fixedFees) / (1 - pctRate) * 100) / 100;
+        }
       };
       
       // Фиксированные сборы для каждого типа
@@ -428,16 +448,17 @@ export async function POST(request: NextRequest) {
       const fbsRequiredPrice = computeRequiredPrice("fbs", fbsFixedFees);
       const rfbsRequiredPrice = computeRequiredPrice("rfbs", rfbsFixedFees);
       
-      // Маржинальность от себестоимости для текущей цены
-      const fboMarginFromCost = totalCost > 0 ? Math.round(fboProfit / totalCost * 10000) / 100 : 0;
-      const fbsMarginFromCost = totalCost > 0 ? Math.round(fbsProfit / totalCost * 10000) / 100 : 0;
-      const rfbsMarginFromCost = totalCost > 0 ? Math.round(rfbsProfit / totalCost * 10000) / 100 : 0;
+      // Наценка от себестоимости для текущей цены
+      const fboMarkupFromCost = totalCost > 0 ? Math.round(fboProfit / totalCost * 10000) / 100 : 0;
+      const fbsMarkupFromCost = totalCost > 0 ? Math.round(fbsProfit / totalCost * 10000) / 100 : 0;
+      const rfbsMarkupFromCost = totalCost > 0 ? Math.round(rfbsProfit / totalCost * 10000) / 100 : 0;
       
       reverseCalculation = {
         targetMargin,
-        fbo: { requiredPrice: fboRequiredPrice, currentMarginFromCost: fboMarginFromCost },
-        fbs: { requiredPrice: fbsRequiredPrice, currentMarginFromCost: fbsMarginFromCost },
-        rfbs: { requiredPrice: rfbsRequiredPrice, currentMarginFromCost: rfbsMarginFromCost },
+        marginMode,
+        fbo: { requiredPrice: fboRequiredPrice, currentMarkupFromCost: fboMarkupFromCost },
+        fbs: { requiredPrice: fbsRequiredPrice, currentMarkupFromCost: fbsMarkupFromCost },
+        rfbs: { requiredPrice: rfbsRequiredPrice, currentMarkupFromCost: rfbsMarkupFromCost },
       };
     }
 
@@ -468,7 +489,8 @@ export async function POST(request: NextRequest) {
           acquiringFee,
           totalFees: Math.round(fboTotalFees * 100) / 100,
           profit: Math.round(fboProfit * 100) / 100,
-          margin: fboMargin,
+          margin: fboMargin, // маржинальность (от цены)
+          markup: fboMarkup, // наценка (от себестоимости)
         },
         fbs: {
           commissionPct: Math.round(fbsCommissionPct),
@@ -483,7 +505,8 @@ export async function POST(request: NextRequest) {
           acquiringFee,
           totalFees: Math.round(fbsTotalFees * 100) / 100,
           profit: Math.round(fbsProfit * 100) / 100,
-          margin: fbsMargin,
+          margin: fbsMargin, // маржинальность (от цены)
+          markup: fbsMarkup, // наценка (от себестоимости)
         },
         rfbs: {
           commissionPct: Math.round(rfbsCommissionPct),
@@ -495,7 +518,8 @@ export async function POST(request: NextRequest) {
           acquiringFee,
           totalFees: Math.round(rfbsTotalFees * 100) / 100,
           profit: Math.round(rfbsProfit * 100) / 100,
-          margin: rfbsMargin,
+          margin: rfbsMargin, // маржинальность (от цены)
+          markup: rfbsMarkup, // наценка (от себестоимости)
         },
         reverseCalculation,
       },
