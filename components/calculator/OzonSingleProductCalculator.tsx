@@ -404,9 +404,10 @@ export function OzonSingleProductCalculator() {
         rfbsLogisticsCost: parseFloat(rfbsLogisticsCost) || 0,
         productCost: parseFloat(productCost) || 0,
         otherExpenses: parseFloat(otherExpenses) || 0,
+        taxRegime: taxRegime || "none",
       };
 
-      // Если указана желаемая наценка/маржинальность — добавляем
+      // Если указана планируемая маржинальность — добавляем (целевая цена считается с учётом налога)
       const marginNum = parseFloat(targetMargin.replace(/\s/g, ""));
       if (!isNaN(marginNum) && marginNum >= 0) {
         requestBody.targetMargin = marginNum;
@@ -1699,7 +1700,13 @@ export function OzonSingleProductCalculator() {
                           Цена при маржинальности {calcResult.reverseCalculation.targetMargin}%
                         </div>
                         <span className="text-xs font-normal text-muted-foreground">
-                          от цены продажи
+                          {calcResult.reverseCalculation.taxRegime === "usn6"
+                            ? "с учётом УСН 6%"
+                            : calcResult.reverseCalculation.taxRegime === "usn15"
+                              ? "с учётом УСН 15%"
+                              : calcResult.reverseCalculation.taxRegime === "nds22"
+                                ? "с учётом НДС 22% + прибыль 25%"
+                                : "без учёта налога"}
                         </span>
                       </td>
                       <td className="text-right py-3 px-3">

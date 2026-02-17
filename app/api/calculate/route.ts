@@ -24,6 +24,7 @@ export async function POST(request: NextRequest) {
       productCost = 0,
       otherExpenses = 0,
       targetMargin, // Опциональная планируемая маржинальность (%)
+      taxRegime = "none", // none | usn6 | usn15 | nds22 — для обратного расчёта цены по марже
     } = body;
 
     // Цена обязательна
@@ -360,16 +361,40 @@ export async function POST(request: NextRequest) {
     let reverseCalculation: any = null;
     
     if (targetMargin !== undefined && targetMargin !== null && totalCost > 0) {
-      // Маржинальность: profit = price * targetMargin / 100
-      //   price = (totalCost + fixedFees) / (1 - pctRate - targetMargin / 100)
+      // Целевая маржинальность = netProfit/price. netProfit учитывает налог по выбранному режиму.
       const marginFraction = targetMargin / 100;
-      
+      const regime = String(taxRegime || "none");
+
+      // Цена из условия: netProfit/price = targetMargin/100, netProfit с учётом налога.
+      // none: netProfit = price*(1-pctRate) - fixedFees - totalCost  => price = (totalCost+fixedFees)/(1-pctRate-m)
+      // usn6: netProfit = 0.94*(price*(1-pctRate)-fixedFees)-totalCost  => price = (0.94*fixedFees+totalCost)/(0.94*(1-pctRate)-m)
+      // usn15: netProfit = 0.85*(price*(1-pctRate)-fixedFees-totalCost)  => price = 0.85*(fixedFees+totalCost)/(0.85*(1-pctRate)-m)
+      // nds22: netProfit = (price*(1-pctRate)-fixedFees-totalCost)*75/122  => price = (fixedFees+totalCost)*75/122 / ((1-pctRate)*75/122-m)
+      const priceFormula = (
+        pctRate: number,
+        fixedFees: number,
+        m: number
+      ): { numerator: number; denominator: number } => {
+        const oneMinusPct = 1 - pctRate;
+        if (regime === "usn6") {
+          return { numerator: 0.94 * fixedFees + totalCost, denominator: 0.94 * oneMinusPct - m };
+        }
+        if (regime === "usn15") {
+          return { numerator: 0.85 * (fixedFees + totalCost), denominator: 0.85 * oneMinusPct - m };
+        }
+        if (regime === "nds22") {
+          const k = 75 / 122;
+          return { numerator: (fixedFees + totalCost) * k, denominator: k * oneMinusPct - m };
+        }
+        return { numerator: totalCost + fixedFees, denominator: oneMinusPct - m };
+      };
+
       const computeRequiredPrice = (
         fulfillment: "fbo" | "fbs" | "rfbs",
         fixedFees: number
       ): number => {
         const brackets: { maxPrice: number; pct: number }[] = [];
-        
+
         if (fulfillment === "rfbs") {
           brackets.push({ maxPrice: Infinity, pct: commissionRecord?.rfbs || 0 });
         } else if (fulfillment === "fbo") {
@@ -398,26 +423,22 @@ export async function POST(request: NextRequest) {
             { maxPrice: Infinity, pct: fbsC[4] },
           );
         }
-        
+
         for (const bracket of brackets) {
           const pctRate = (bracket.pct + acquiringPct) / 100;
-          let requiredPrice: number;
-          
-          const denominator = 1 - pctRate - marginFraction;
+          const { numerator, denominator } = priceFormula(pctRate, fixedFees, marginFraction);
           if (denominator <= 0) continue;
-          requiredPrice = (totalCost + fixedFees) / denominator;
-          
+          const requiredPrice = numerator / denominator;
           if (requiredPrice <= bracket.maxPrice) {
             return Math.round(requiredPrice * 100) / 100;
           }
         }
-        
-        // Fallback — последний диапазон
+
         const lastBracket = brackets[brackets.length - 1];
         const pctRate = (lastBracket.pct + acquiringPct) / 100;
-        const denominator = 1 - pctRate - marginFraction;
+        const { numerator, denominator } = priceFormula(pctRate, fixedFees, marginFraction);
         if (denominator <= 0) return 0;
-        return Math.round((totalCost + fixedFees) / denominator * 100) / 100;
+        return Math.round((numerator / denominator) * 100) / 100;
       };
       
       // Фиксированные сборы для каждого типа
@@ -437,6 +458,7 @@ export async function POST(request: NextRequest) {
       reverseCalculation = {
         targetMargin,
         marginMode: "margin",
+        taxRegime: regime,
         fbo: { requiredPrice: fboRequiredPrice, currentMarkupFromCost: fboMarkupFromCost },
         fbs: { requiredPrice: fbsRequiredPrice, currentMarkupFromCost: fbsMarkupFromCost },
         rfbs: { requiredPrice: rfbsRequiredPrice, currentMarkupFromCost: rfbsMarkupFromCost },
