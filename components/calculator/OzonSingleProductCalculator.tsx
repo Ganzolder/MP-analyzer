@@ -497,6 +497,58 @@ export function OzonSingleProductCalculator() {
     return { none, usn6, usn15, nds22 };
   };
 
+  // ─── Расчёт целевой цены по маржинальности с учётом текущего налогового режима (клиентский) ──
+  const computeTargetPrices = (regime: string): { fbo: number; fbs: number; rfbs: number } | null => {
+    if (!calcResult || !calcResult.reverseCalculation) return null;
+    const targetM = calcResult.reverseCalculation.targetMargin;
+    if (!targetM || targetM <= 0) return null;
+    const tc = calcResult.totalCost || 0;
+    if (tc <= 0) return null;
+
+    const m = targetM / 100;
+
+    const getFboFixedFees = () => {
+      const f = calcResult.fbo;
+      return f.shippingCost + (f.lastMileFee ?? 0);
+    };
+    const getFbsFixedFees = () => {
+      const f = calcResult.fbs;
+      return f.shippingCost + (f.dispatchFee ?? 0) + (f.deliveryToPickupPoint ?? 0);
+    };
+    const getRfbsFixedFees = () => {
+      return calcResult.rfbs.shippingCost;
+    };
+
+    const computePrice = (commPct: number, fixedFees: number): number => {
+      const pctRate = (commPct + calcResult.acquiringPct) / 100;
+      const oneMinusPct = 1 - pctRate;
+      let numerator: number;
+      let denominator: number;
+      if (regime === "usn6") {
+        numerator = 0.94 * fixedFees + tc;
+        denominator = 0.94 * oneMinusPct - m;
+      } else if (regime === "usn15") {
+        numerator = 0.85 * (fixedFees + tc);
+        denominator = 0.85 * oneMinusPct - m;
+      } else if (regime === "nds22") {
+        const k = 75 / 122;
+        numerator = (fixedFees + tc) * k;
+        denominator = k * oneMinusPct - m;
+      } else {
+        numerator = tc + fixedFees;
+        denominator = oneMinusPct - m;
+      }
+      if (denominator <= 0) return 0;
+      return Math.round(numerator / denominator * 100) / 100;
+    };
+
+    return {
+      fbo: computePrice(calcResult.fbo.commissionPct, getFboFixedFees()),
+      fbs: computePrice(calcResult.fbs.commissionPct, getFbsFixedFees()),
+      rfbs: computePrice(calcResult.rfbs.commissionPct, getRfbsFixedFees()),
+    };
+  };
+
   return (
     <div className="space-y-6">
       {/* Параметры товара */}
@@ -1692,41 +1744,43 @@ export function OzonSingleProductCalculator() {
                     </tr>
                   )}
 
-                  {/* Рекомендуемая цена (обратный расчёт) */}
-                  {calcResult.reverseCalculation && (
-                    <tr className="border-t-2 bg-amber-50/50 dark:bg-amber-950/20">
-                      <td className="py-3 px-3 font-bold text-amber-800 dark:text-amber-300">
-                        <div className="flex items-center gap-1.5">
-                          <Target className="h-4 w-4" />
-                          Цена при маржинальности {calcResult.reverseCalculation.targetMargin}%
-                        </div>
-                        <span className="text-xs font-normal text-muted-foreground">
-                          {calcResult.reverseCalculation.taxRegime === "usn6"
-                            ? "с учётом УСН 6%"
-                            : calcResult.reverseCalculation.taxRegime === "usn15"
-                              ? "с учётом УСН 15%"
-                              : calcResult.reverseCalculation.taxRegime === "nds22"
-                                ? "с учётом НДС 22% + прибыль 25%"
-                                : "без учёта налога"}
-                        </span>
-                      </td>
-                      <td className="text-right py-3 px-3">
-                        <span className="font-bold text-amber-700 dark:text-amber-400 text-base">
-                          {fmtMoney(calcResult.reverseCalculation.fbo.requiredPrice)}
-                        </span>
-                      </td>
-                      <td className="text-right py-3 px-3">
-                        <span className="font-bold text-amber-700 dark:text-amber-400 text-base">
-                          {fmtMoney(calcResult.reverseCalculation.fbs.requiredPrice)}
-                        </span>
-                      </td>
-                      <td className="text-right py-3 px-3">
-                        <span className="font-bold text-amber-700 dark:text-amber-400 text-base">
-                          {fmtMoney(calcResult.reverseCalculation.rfbs.requiredPrice)}
-                        </span>
-                      </td>
-                    </tr>
-                  )}
+                  {/* Рекомендуемая цена (обратный расчёт, с учётом текущего налогового режима) */}
+                  {calcResult.reverseCalculation && (() => {
+                    const tp = computeTargetPrices(taxRegime);
+                    if (!tp) return null;
+                    const taxLabel = taxRegime === "usn6" ? "с учётом УСН 6%"
+                      : taxRegime === "usn15" ? "с учётом УСН 15%"
+                      : taxRegime === "nds22" ? "с учётом НДС 22% + прибыль 25%"
+                      : "без учёта налога";
+                    return (
+                      <tr className="border-t-2 bg-amber-50/50 dark:bg-amber-950/20">
+                        <td className="py-3 px-3 font-bold text-amber-800 dark:text-amber-300">
+                          <div className="flex items-center gap-1.5">
+                            <Target className="h-4 w-4" />
+                            Цена при маржинальности {calcResult.reverseCalculation.targetMargin}%
+                          </div>
+                          <span className="text-xs font-normal text-muted-foreground">
+                            {taxLabel}
+                          </span>
+                        </td>
+                        <td className="text-right py-3 px-3">
+                          <span className="font-bold text-amber-700 dark:text-amber-400 text-base">
+                            {fmtMoney(tp.fbo)}
+                          </span>
+                        </td>
+                        <td className="text-right py-3 px-3">
+                          <span className="font-bold text-amber-700 dark:text-amber-400 text-base">
+                            {fmtMoney(tp.fbs)}
+                          </span>
+                        </td>
+                        <td className="text-right py-3 px-3">
+                          <span className="font-bold text-amber-700 dark:text-amber-400 text-base">
+                            {fmtMoney(tp.rfbs)}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })()}
                 </tbody>
               </table>
             </div>
