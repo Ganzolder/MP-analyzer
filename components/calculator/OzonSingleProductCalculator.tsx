@@ -1766,29 +1766,45 @@ export function OzonSingleProductCalculator() {
         const fbsProfit1 = fbsAll[selectedTax].netProfit;
         const rfbsProfit1 = rfbsAll[selectedTax].netProfit;
 
-        // Стоимость обратной логистики (возвраты) = себестоимость + логистика обратно
-        // При возврате теряется: себестоимость + все комиссии/сборы на этот товар
-        // Упрощённо: при возврате прибыль = 0, а затраты = себестоимость (товар потерян/нужно повторно отправить)
         const cost1 = calcResult.totalCost || 0;
-        const returnCostPerItem = cost1; // При возврате теряем себестоимость
 
-        // Выручка (доход) по партии
+        // ─── Расчёт потерь от возвратов ───
+        // При возврате: двойная логистика + фиксированные сборы (последняя миля / доставка до ПВЗ / обработка)
+        // Комиссия и эквайринг НЕ списываются. Товар возвращается продавцу.
+        const fboReturnPerItem = Math.round((
+          calcResult.fbo.shippingCost * 2 // логистика туда + обратно
+          + (calcResult.fbo.lastMileFee || 0) // последняя миля
+        ) * 100) / 100;
+
+        const fbsReturnPerItem = Math.round((
+          calcResult.fbs.shippingCost * 2 // логистика туда + обратно
+          + (calcResult.fbs.deliveryToPickupPoint || 0) // доставка до места выдачи
+          + calcResult.fbs.processingFee // обработка заказа
+        ) * 100) / 100;
+
+        const rfbsReturnPerItem = Math.round((
+          calcResult.rfbs.shippingCost * 2 // логистика туда + обратно
+        ) * 100) / 100;
+
+        // Потери от возвратов (по каждому типу отгрузки)
+        const fboReturnLoss = Math.round(returnQty * fboReturnPerItem * 100) / 100;
+        const fbsReturnLoss = Math.round(returnQty * fbsReturnPerItem * 100) / 100;
+        const rfbsReturnLoss = Math.round(returnQty * rfbsReturnPerItem * 100) / 100;
+
+        // Выручка (доход) по партии (от проданных)
         const fboRevenue = soldQty * calcResult.price;
         const fbsRevenue = soldQty * calcResult.price;
         const rfbsRevenue = soldQty * calcResult.price;
 
         // Прибыль от проданных
-        const fboProfitSold = soldQty * fboProfit1;
-        const fbsProfitSold = soldQty * fbsProfit1;
-        const rfbsProfitSold = soldQty * rfbsProfit1;
-
-        // Потери от возвратов
-        const returnLoss = returnQty * returnCostPerItem;
+        const fboProfitSold = Math.round(soldQty * fboProfit1 * 100) / 100;
+        const fbsProfitSold = Math.round(soldQty * fbsProfit1 * 100) / 100;
+        const rfbsProfitSold = Math.round(soldQty * rfbsProfit1 * 100) / 100;
 
         // Итоговая прибыль
-        const fboTotalProfit = Math.round((fboProfitSold - returnLoss) * 100) / 100;
-        const fbsTotalProfit = Math.round((fbsProfitSold - returnLoss) * 100) / 100;
-        const rfbsTotalProfit = Math.round((rfbsProfitSold - returnLoss) * 100) / 100;
+        const fboTotalProfit = Math.round((fboProfitSold - fboReturnLoss) * 100) / 100;
+        const fbsTotalProfit = Math.round((fbsProfitSold - fbsReturnLoss) * 100) / 100;
+        const rfbsTotalProfit = Math.round((rfbsProfitSold - rfbsReturnLoss) * 100) / 100;
 
         // Инвестиции в партию (себестоимость всех товаров)
         const totalInvestment = qty * cost1;
@@ -1871,15 +1887,45 @@ export function OzonSingleProductCalculator() {
 
                     {/* Потери от возвратов */}
                     {returnQty > 0 && (
-                      <tr className="border-b bg-red-50/30 dark:bg-red-950/10">
-                        <td className="py-2.5 px-3 font-medium text-red-700 dark:text-red-400">
-                          Потери от возвратов
-                          <span className="text-xs text-muted-foreground ml-1">({returnQty} шт × {fmtMoney(cost1)})</span>
-                        </td>
-                        <td className="text-right py-2.5 px-3 text-red-600" colSpan={3}>
-                          −{fmtMoney(returnLoss)}
-                        </td>
-                      </tr>
+                      <>
+                        <tr className="border-b bg-red-50/30 dark:bg-red-950/10">
+                          <td className="py-2.5 px-3 font-medium text-red-700 dark:text-red-400">
+                            Потери от возвратов
+                            <span className="text-xs text-muted-foreground ml-1">({returnQty} шт)</span>
+                            <div className="text-[10px] text-muted-foreground mt-0.5">
+                              Двойная логистика + фикс. сборы
+                            </div>
+                          </td>
+                          <td className="text-right py-2.5 px-3 text-red-600">
+                            <div>−{fmtMoney(fboReturnLoss)}</div>
+                            <div className="text-[10px] text-muted-foreground">{fmtMoney(fboReturnPerItem)} / шт</div>
+                          </td>
+                          <td className="text-right py-2.5 px-3 text-red-600">
+                            <div>−{fmtMoney(fbsReturnLoss)}</div>
+                            <div className="text-[10px] text-muted-foreground">{fmtMoney(fbsReturnPerItem)} / шт</div>
+                          </td>
+                          <td className="text-right py-2.5 px-3 text-red-600">
+                            <div>−{fmtMoney(rfbsReturnLoss)}</div>
+                            <div className="text-[10px] text-muted-foreground">{fmtMoney(rfbsReturnPerItem)} / шт</div>
+                          </td>
+                        </tr>
+                        {/* Детализация стоимости возврата */}
+                        <tr className="border-b bg-red-50/20 dark:bg-red-950/5">
+                          <td className="py-1.5 px-3 pl-6 text-xs text-muted-foreground" colSpan={4}>
+                            <div className="flex flex-wrap gap-x-6 gap-y-1">
+                              <span>
+                                <strong>FBO:</strong> лог. {fmtMoney(calcResult.fbo.shippingCost)}×2 + посл. миля {fmtMoney(calcResult.fbo.lastMileFee || 0)} = {fmtMoney(fboReturnPerItem)}/шт
+                              </span>
+                              <span>
+                                <strong>FBS:</strong> лог. {fmtMoney(calcResult.fbs.shippingCost)}×2 + доставка {fmtMoney(calcResult.fbs.deliveryToPickupPoint || 0)} + обработка {fmtMoney(calcResult.fbs.processingFee)} = {fmtMoney(fbsReturnPerItem)}/шт
+                              </span>
+                              <span>
+                                <strong>RFBS:</strong> лог. {fmtMoney(calcResult.rfbs.shippingCost)}×2 = {fmtMoney(rfbsReturnPerItem)}/шт
+                              </span>
+                            </div>
+                          </td>
+                        </tr>
+                      </>
                     )}
 
                     {/* Итоговая прибыль */}
