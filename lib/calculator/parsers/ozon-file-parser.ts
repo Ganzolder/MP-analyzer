@@ -83,23 +83,31 @@ function parseString(value: any): string {
 
 /**
  * Извлекает текстовое значение ячейки из worksheet, сохраняя исходный формат.
- * Это критично для артикулов: Excel может хранить "00123" как число 123,
- * а большие числа теряют точность при конвертации Number → String.
- * Используем свойство `w` (formatted text) ячейки, если доступно.
+ * 
+ * Проблема: Excel может хранить артикул "123" как число с форматом "000000000",
+ * и тогда cell.w вернёт "000000123" — что неверно.
+ * 
+ * Логика:
+ * - Строковые ячейки (cell.t === "s"): возвращаем cell.v как есть (сохраняет реальные ведущие нули)
+ * - Числовые ячейки (cell.t === "n"): возвращаем String(cell.v) — чистое число без форматирования
  */
 function getRawCellText(worksheet: XLSX.WorkSheet, row: number, col: number): string {
   const cellAddress = XLSX.utils.encode_cell({ r: row, c: col });
   const cell = worksheet[cellAddress];
   if (!cell) return "";
-  // Если есть отформатированный текст (w) — используем его
-  if (cell.w !== undefined && cell.w !== null) {
-    return String(cell.w).trim();
-  }
-  // Если значение — строка, возвращаем как есть
+
+  // Строковые ячейки — возвращаем как есть (сохраняет реальные ведущие нули, если текст)
   if (cell.t === "s" && cell.v !== undefined) {
     return String(cell.v).trim();
   }
-  // Для чисел — возвращаем точное представление
+
+  // Числовые ячейки — используем сырое значение, НЕ форматированное (cell.w),
+  // чтобы не добавлять ведущие нули из Excel-формата ячейки
+  if (cell.t === "n" && cell.v !== undefined && cell.v !== null) {
+    return String(cell.v).trim();
+  }
+
+  // Прочие типы — fallback
   if (cell.v !== undefined && cell.v !== null) {
     return String(cell.v).trim();
   }
