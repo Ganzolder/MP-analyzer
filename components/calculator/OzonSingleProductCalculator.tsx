@@ -32,7 +32,8 @@ interface FulfillmentResult {
 
 interface ReverseCalcResult {
   targetMargin: number;
-  marginMode: string; // "markup" | "margin"
+  marginMode: string;
+  taxRegime?: string; // "none" | "usn6" | "usn15" | "nds22"
   fbo: { requiredPrice: number; currentMarkupFromCost: number };
   fbs: { requiredPrice: number; currentMarkupFromCost: number };
   rfbs: { requiredPrice: number; currentMarkupFromCost: number };
