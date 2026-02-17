@@ -75,6 +75,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Определяем % комиссии по ценовому диапазону
+    // Каскадная логика: если значение null — берём предыдущий ненулевой диапазон
     const getCommissionPercent = (
       record: typeof commissionRecord,
       fulfillment: "fbo" | "fbs" | "rfbs",
@@ -82,18 +83,50 @@ export async function POST(request: NextRequest) {
     ): number => {
       if (!record) return 0;
       if (fulfillment === "rfbs") return record.rfbs || 0;
+
       if (fulfillment === "fbo") {
-        if (priceForCalc <= 100) return record.fboUpTo100 || 0;
-        if (priceForCalc <= 300) return record.fbo100To300 || 0;
-        if (priceForCalc <= 500) return record.fbo300To500 || 0;
-        if (priceForCalc <= 1500) return record.fbo500To1500 || 0;
-        return record.fboOver1500 || 0;
+        // FBO: 5 диапазонов, каскадное заполнение null
+        const vals = [
+          record.fboUpTo100,
+          record.fbo100To300,
+          record.fbo300To500,
+          record.fbo500To1500,
+          record.fboOver1500,
+        ];
+        const cascaded = cascadeFill(vals);
+        if (priceForCalc <= 100) return cascaded[0];
+        if (priceForCalc <= 300) return cascaded[1];
+        if (priceForCalc <= 500) return cascaded[2];
+        if (priceForCalc <= 1500) return cascaded[3];
+        return cascaded[4];
       }
-      // fbs
-      if (priceForCalc <= 100) return record.fbsUpTo100 || 0;
-      if (priceForCalc <= 300) return record.fbs100To300 || 0;
-      return record.fbsOver300 || 0;
+
+      // FBS: 3 диапазона из БД → расширяем до 5 с каскадом
+      const fbsVals = [
+        record.fbsUpTo100,
+        record.fbs100To300,
+        record.fbsOver300,
+        null, // 500-1500: каскад от over300
+        null, // over1500: каскад от over300
+      ];
+      const fbsCascaded = cascadeFill(fbsVals);
+      if (priceForCalc <= 100) return fbsCascaded[0];
+      if (priceForCalc <= 300) return fbsCascaded[1];
+      if (priceForCalc <= 500) return fbsCascaded[2];
+      if (priceForCalc <= 1500) return fbsCascaded[3];
+      return fbsCascaded[4];
     };
+
+    // Вспомогательная: каскадное заполнение null → берём предыдущее ненулевое
+    function cascadeFill(arr: (number | null | undefined)[]): number[] {
+      const result: number[] = [];
+      let last = 0;
+      for (const v of arr) {
+        if (v !== null && v !== undefined && v > 0) last = v;
+        result.push(last);
+      }
+      return result;
+    }
 
     const fboCommissionPct = getCommissionPercent(commissionRecord, "fbo", price);
     const fbsCommissionPct = getCommissionPercent(commissionRecord, "fbs", price);
@@ -340,19 +373,30 @@ export async function POST(request: NextRequest) {
         if (fulfillment === "rfbs") {
           brackets.push({ maxPrice: Infinity, pct: commissionRecord?.rfbs || 0 });
         } else if (fulfillment === "fbo") {
+          const fboC = cascadeFill([
+            commissionRecord?.fboUpTo100, commissionRecord?.fbo100To300,
+            commissionRecord?.fbo300To500, commissionRecord?.fbo500To1500,
+            commissionRecord?.fboOver1500,
+          ]);
           brackets.push(
-            { maxPrice: 100, pct: commissionRecord?.fboUpTo100 || 0 },
-            { maxPrice: 300, pct: commissionRecord?.fbo100To300 || 0 },
-            { maxPrice: 500, pct: commissionRecord?.fbo300To500 || 0 },
-            { maxPrice: 1500, pct: commissionRecord?.fbo500To1500 || 0 },
-            { maxPrice: Infinity, pct: commissionRecord?.fboOver1500 || 0 },
+            { maxPrice: 100, pct: fboC[0] },
+            { maxPrice: 300, pct: fboC[1] },
+            { maxPrice: 500, pct: fboC[2] },
+            { maxPrice: 1500, pct: fboC[3] },
+            { maxPrice: Infinity, pct: fboC[4] },
           );
         } else {
-          // fbs
+          // fbs: 3 уровня → расширяем до 5 с каскадом
+          const fbsC = cascadeFill([
+            commissionRecord?.fbsUpTo100, commissionRecord?.fbs100To300,
+            commissionRecord?.fbsOver300, null, null,
+          ]);
           brackets.push(
-            { maxPrice: 100, pct: commissionRecord?.fbsUpTo100 || 0 },
-            { maxPrice: 300, pct: commissionRecord?.fbs100To300 || 0 },
-            { maxPrice: Infinity, pct: commissionRecord?.fbsOver300 || 0 },
+            { maxPrice: 100, pct: fbsC[0] },
+            { maxPrice: 300, pct: fbsC[1] },
+            { maxPrice: 500, pct: fbsC[2] },
+            { maxPrice: 1500, pct: fbsC[3] },
+            { maxPrice: Infinity, pct: fbsC[4] },
           );
         }
         

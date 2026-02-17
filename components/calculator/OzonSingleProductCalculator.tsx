@@ -631,13 +631,37 @@ export function OzonSingleProductCalculator() {
                     </tr>
                   </thead>
                   <tbody>
-                    {[
-                      { label: "до 100 ₽", fbo: commissionRates.rates.fbo.upTo100, fboFresh: commissionRates.rates.fboFresh.upTo100, fbs: commissionRates.rates.fbs.upTo100, rfbs: commissionRates.rates.rfbs, priceRange: [0, 100] },
-                      { label: "100–300 ₽", fbo: commissionRates.rates.fbo.from100to300, fboFresh: commissionRates.rates.fboFresh.from100to300, fbs: commissionRates.rates.fbs.from100to300, rfbs: null, priceRange: [100, 300] },
-                      { label: "300–500 ₽", fbo: commissionRates.rates.fbo.from300to500, fboFresh: commissionRates.rates.fboFresh.over300, fbs: commissionRates.rates.fbs.over300, rfbs: null, priceRange: [300, 500] },
-                      { label: "500–1500 ₽", fbo: commissionRates.rates.fbo.from500to1500, fboFresh: null, fbs: null, rfbs: null, priceRange: [500, 1500] },
-                      { label: "свыше 1500 ₽", fbo: commissionRates.rates.fbo.over1500, fboFresh: null, fbs: null, rfbs: null, priceRange: [1500, Infinity] },
-                    ].map((row, idx) => {
+                    {(() => {
+                      const r = commissionRates.rates;
+                      // Каскадное заполнение: null → берём последнее известное значение
+                      const fboVals = [r.fbo.upTo100, r.fbo.from100to300, r.fbo.from300to500, r.fbo.from500to1500, r.fbo.over1500];
+                      const fboFreshVals = [r.fboFresh.upTo100, r.fboFresh.from100to300, r.fboFresh.over300, null, null];
+                      const fbsVals = [r.fbs.upTo100, r.fbs.from100to300, r.fbs.over300, null, null];
+                      const rfbsVals = [r.rfbs, null, null, null, null];
+
+                      const cascade = (arr: (number | null | undefined)[]) => {
+                        const result: (number | null)[] = [];
+                        let last: number | null = null;
+                        for (const v of arr) {
+                          if (v !== null && v !== undefined) last = v;
+                          result.push(last);
+                        }
+                        return result;
+                      };
+
+                      const fbo = cascade(fboVals);
+                      const fboFresh = cascade(fboFreshVals);
+                      const fbs = cascade(fbsVals);
+                      const rfbs = cascade(rfbsVals);
+
+                      return [
+                        { label: "до 100 ₽", fbo: fbo[0], fboFresh: fboFresh[0], fbs: fbs[0], rfbs: rfbs[0], priceRange: [0, 100] },
+                        { label: "100–300 ₽", fbo: fbo[1], fboFresh: fboFresh[1], fbs: fbs[1], rfbs: rfbs[1], priceRange: [100, 300] },
+                        { label: "300–500 ₽", fbo: fbo[2], fboFresh: fboFresh[2], fbs: fbs[2], rfbs: rfbs[2], priceRange: [300, 500] },
+                        { label: "500–1500 ₽", fbo: fbo[3], fboFresh: fboFresh[3], fbs: fbs[3], rfbs: rfbs[3], priceRange: [500, 1500] },
+                        { label: "свыше 1500 ₽", fbo: fbo[4], fboFresh: fboFresh[4], fbs: fbs[4], rfbs: rfbs[4], priceRange: [1500, Infinity] },
+                      ];
+                    })().map((row, idx) => {
                       const priceNum = parseFloat(price.replace(/\s/g, ""));
                       const isActive = !isNaN(priceNum) && priceNum > 0 && priceNum > row.priceRange[0] && priceNum <= row.priceRange[1];
                       const isActiveFirst = idx === 0 && !isNaN(priceNum) && priceNum > 0 && priceNum <= 100;

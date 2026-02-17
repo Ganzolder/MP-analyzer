@@ -221,17 +221,40 @@ export async function POST(request: NextRequest) {
     ): number {
       if (!record) return 0;
       if (fulfillment === "rfbs") return record.rfbs || 0;
+
       if (fulfillment === "fbo") {
-        if (price <= 100) return record.fboUpTo100 || 0;
-        if (price <= 300) return record.fbo100To300 || 0;
-        if (price <= 500) return record.fbo300To500 || 0;
-        if (price <= 1500) return record.fbo500To1500 || 0;
-        return record.fboOver1500 || 0;
+        const fboC = cascadeFill([
+          record.fboUpTo100, record.fbo100To300,
+          record.fbo300To500, record.fbo500To1500,
+          record.fboOver1500,
+        ]);
+        if (price <= 100) return fboC[0];
+        if (price <= 300) return fboC[1];
+        if (price <= 500) return fboC[2];
+        if (price <= 1500) return fboC[3];
+        return fboC[4];
       }
-      // fbs
-      if (price <= 100) return record.fbsUpTo100 || 0;
-      if (price <= 300) return record.fbs100To300 || 0;
-      return record.fbsOver300 || 0;
+      // fbs: 3 уровня → расширяем до 5 с каскадом
+      const fbsC = cascadeFill([
+        record.fbsUpTo100, record.fbs100To300,
+        record.fbsOver300, null, null,
+      ]);
+      if (price <= 100) return fbsC[0];
+      if (price <= 300) return fbsC[1];
+      if (price <= 500) return fbsC[2];
+      if (price <= 1500) return fbsC[3];
+      return fbsC[4];
+    }
+
+    // Каскадное заполнение: null → предыдущее ненулевое значение
+    function cascadeFill(arr: (number | null | undefined)[]): number[] {
+      const result: number[] = [];
+      let last = 0;
+      for (const v of arr) {
+        if (v !== null && v !== undefined && v > 0) last = v;
+        result.push(last);
+      }
+      return result;
     }
 
     // Алгебраический расчёт рекомендуемой цены
@@ -251,18 +274,29 @@ export async function POST(request: NextRequest) {
       if (fulfillment === "rfbs") {
         brackets.push({ maxPrice: Infinity, pct: commission?.rfbs || 0 });
       } else if (fulfillment === "fbo") {
+        const fboC = cascadeFill([
+          commission?.fboUpTo100, commission?.fbo100To300,
+          commission?.fbo300To500, commission?.fbo500To1500,
+          commission?.fboOver1500,
+        ]);
         brackets.push(
-          { maxPrice: 100, pct: commission?.fboUpTo100 || 0 },
-          { maxPrice: 300, pct: commission?.fbo100To300 || 0 },
-          { maxPrice: 500, pct: commission?.fbo300To500 || 0 },
-          { maxPrice: 1500, pct: commission?.fbo500To1500 || 0 },
-          { maxPrice: Infinity, pct: commission?.fboOver1500 || 0 },
+          { maxPrice: 100, pct: fboC[0] },
+          { maxPrice: 300, pct: fboC[1] },
+          { maxPrice: 500, pct: fboC[2] },
+          { maxPrice: 1500, pct: fboC[3] },
+          { maxPrice: Infinity, pct: fboC[4] },
         );
       } else {
+        const fbsC = cascadeFill([
+          commission?.fbsUpTo100, commission?.fbs100To300,
+          commission?.fbsOver300, null, null,
+        ]);
         brackets.push(
-          { maxPrice: 100, pct: commission?.fbsUpTo100 || 0 },
-          { maxPrice: 300, pct: commission?.fbs100To300 || 0 },
-          { maxPrice: Infinity, pct: commission?.fbsOver300 || 0 },
+          { maxPrice: 100, pct: fbsC[0] },
+          { maxPrice: 300, pct: fbsC[1] },
+          { maxPrice: 500, pct: fbsC[2] },
+          { maxPrice: 1500, pct: fbsC[3] },
+          { maxPrice: Infinity, pct: fbsC[4] },
         );
       }
 
