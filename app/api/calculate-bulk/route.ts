@@ -18,7 +18,6 @@ export async function POST(request: NextRequest) {
       acceptanceType = "employee",
       deliveryToPickupPoint, // из БД если не передан
       lastMileFee, // из БД если не передан
-      marginMode = "markup", // "markup" = наценка, "margin" = маржинальность
     } = body;
 
     if (!Array.isArray(products) || products.length === 0) {
@@ -258,10 +257,7 @@ export async function POST(request: NextRequest) {
       return result;
     }
 
-    // Алгебраический расчёт рекомендуемой цены
-    // marginMode: "markup" = наценка (от себестоимости), "margin" = маржинальность (от цены)
-    const isMarginMode = marginMode === "margin";
-
+    // Алгебраический расчёт рекомендуемой цены по планируемой маржинальности
     function computeRecommendedPrice(
       commission: typeof allCommissions[0] | null,
       fulfillment: "fbo" | "fbs" | "rfbs",
@@ -269,8 +265,7 @@ export async function POST(request: NextRequest) {
       targetMargin: number,
       fixedFees: number
     ): number {
-      const desiredProfit = isMarginMode ? 0 : totalCost * targetMargin / 100;
-      const marginFraction = isMarginMode ? targetMargin / 100 : 0;
+      const marginFraction = targetMargin / 100;
 
       // Ценовые диапазоны комиссий
       type Bracket = { maxPrice: number; pct: number };
@@ -309,16 +304,9 @@ export async function POST(request: NextRequest) {
         const pctRate = (bracket.pct + acquiringPct) / 100;
         let requiredPrice: number;
 
-        if (isMarginMode) {
-          // Маржинальность: price = (totalCost + fixedFees) / (1 - pctRate - margin/100)
-          const denominator = 1 - pctRate - marginFraction;
-          if (denominator <= 0) continue;
-          requiredPrice = (totalCost + fixedFees) / denominator;
-        } else {
-          // Наценка: price = (totalCost + desiredProfit + fixedFees) / (1 - pctRate)
-          if (pctRate >= 1) continue;
-          requiredPrice = (totalCost + desiredProfit + fixedFees) / (1 - pctRate);
-        }
+        const denominator = 1 - pctRate - marginFraction;
+        if (denominator <= 0) continue;
+        requiredPrice = (totalCost + fixedFees) / denominator;
 
         if (requiredPrice <= bracket.maxPrice) {
           return Math.round(requiredPrice * 100) / 100;
@@ -328,14 +316,9 @@ export async function POST(request: NextRequest) {
       // Fallback — последний диапазон
       const last = brackets[brackets.length - 1];
       const pctRate = (last.pct + acquiringPct) / 100;
-      if (isMarginMode) {
-        const denominator = 1 - pctRate - marginFraction;
-        if (denominator <= 0) return 0;
-        return Math.round((totalCost + fixedFees) / denominator * 100) / 100;
-      } else {
-        if (pctRate >= 1) return 0;
-        return Math.round((totalCost + desiredProfit + fixedFees) / (1 - pctRate) * 100) / 100;
-      }
+      const denominator = 1 - pctRate - marginFraction;
+      if (denominator <= 0) return 0;
+      return Math.round((totalCost + fixedFees) / denominator * 100) / 100;
     }
 
     // Полный расчёт для одного типа отгрузки при заданной цене
@@ -480,7 +463,6 @@ export async function POST(request: NextRequest) {
           pickupPointType,
           acceptanceType,
           deliveryToPickupPoint: resolvedDeliveryToPickupPoint,
-          marginMode,
         },
       },
     });

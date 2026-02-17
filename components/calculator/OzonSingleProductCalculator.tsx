@@ -134,7 +134,6 @@ export function OzonSingleProductCalculator() {
 
   // Желаемая наценка / маржинальность (опциональное поле)
   const [targetMargin, setTargetMargin] = useState<string>("");
-  const [marginMode, setMarginMode] = useState<"markup" | "margin">("markup");
 
   // Планируемые продажи и возвраты
   const [plannedQuantity, setPlannedQuantity] = useState<string>("");
@@ -411,7 +410,7 @@ export function OzonSingleProductCalculator() {
       const marginNum = parseFloat(targetMargin.replace(/\s/g, ""));
       if (!isNaN(marginNum) && marginNum >= 0) {
         requestBody.targetMargin = marginNum;
-        requestBody.marginMode = marginMode;
+        requestBody.marginMode = "margin";
       }
 
       const response = await fetch("/api/calculate", {
@@ -1128,12 +1127,12 @@ export function OzonSingleProductCalculator() {
             </p>
           </div>
 
-          {/* Желаемая наценка / маржинальность */}
+          {/* Планируемая маржинальность (целевой расчёт цены) */}
           <div className="rounded-lg border bg-amber-50/50 dark:bg-amber-950/20 p-4 space-y-3">
             <div className="flex items-center gap-2">
               <Target className="h-4 w-4 text-amber-600" />
-              <Label className="text-sm font-semibold text-amber-800 dark:text-amber-300">
-                Целевой расчёт цены
+              <Label className="text-sm font-semibold text-amber-800 dark:text-amber-300" htmlFor="targetMargin">
+                Планируемая маржинальность, %
               </Label>
               <TooltipProvider>
                 <Tooltip>
@@ -1142,24 +1141,13 @@ export function OzonSingleProductCalculator() {
                   </TooltipTrigger>
                   <TooltipContent className="max-w-xs">
                     <p>
-                      Если заполнено — калькулятор покажет рекомендуемую цену для каждого типа
-                      отгрузки, при которой ваш показатель будет равен указанному %.
+                      Если указано — калькулятор покажет рекомендуемую цену для каждого типа
+                      отгрузки, при которой маржинальность (доля прибыли от цены) будет равна указанному %.
                     </p>
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
             </div>
-
-            {/* Переключатель режима */}
-            <Select value={marginMode} onValueChange={(v) => setMarginMode(v as "markup" | "margin")}>
-              <SelectTrigger className="bg-white dark:bg-background">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="markup">Наценка — (Цена − Себестоимость) / Себестоимость × 100%</SelectItem>
-                <SelectItem value="margin">Маржинальность — (Цена − Себестоимость) / Цена × 100%</SelectItem>
-              </SelectContent>
-            </Select>
 
             <Input
               id="targetMargin"
@@ -1175,10 +1163,7 @@ export function OzonSingleProductCalculator() {
               className="bg-white dark:bg-background"
             />
             <p className="text-xs text-muted-foreground">
-              {marginMode === "markup"
-                ? "Наценка рассчитывается от себестоимости: какой % добавить сверх себестоимости."
-                : "Маржинальность рассчитывается от цены: какую долю цены составляет прибыль."}
-              {" "}Необязательное поле. Если указано — в результатах появится строка с рекомендуемой ценой.
+              Маржинальность = (Цена − Себестоимость − сборы) / Цена × 100%. Необязательное поле. Если указано — в результатах появится рекомендуемая цена.
             </p>
           </div>
         </CardContent>
@@ -1711,10 +1696,10 @@ export function OzonSingleProductCalculator() {
                       <td className="py-3 px-3 font-bold text-amber-800 dark:text-amber-300">
                         <div className="flex items-center gap-1.5">
                           <Target className="h-4 w-4" />
-                          Цена при {calcResult.reverseCalculation.marginMode === "margin" ? "маржинальности" : "наценке"} {calcResult.reverseCalculation.targetMargin}%
+                          Цена при маржинальности {calcResult.reverseCalculation.targetMargin}%
                         </div>
                         <span className="text-xs font-normal text-muted-foreground">
-                          {calcResult.reverseCalculation.marginMode === "margin" ? "от цены продажи" : "от себестоимости"}
+                          от цены продажи
                         </span>
                       </td>
                       <td className="text-right py-3 px-3">

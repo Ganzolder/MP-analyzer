@@ -30,7 +30,6 @@ interface OzonBulkResultsProps {
     pickupPointType: string;
     acceptanceType: string;
     deliveryToPickupPoint: number;
-    marginMode?: string; // "markup" | "margin"
   };
 }
 
@@ -119,7 +118,7 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
       "Категория": r.category,
       "Себестоимость, ₽": r.cost,
       "Объём, л": r.volumeLiters.toFixed(3),
-      "Наценка/Маржа, %": r.targetMargin,
+      "Маржинальность, %": r.targetMargin,
       // FBO
       "FBO Цена, ₽": r.fbo.recommendedPrice.toFixed(2),
       "FBO Комиссия, %": r.fbo.commissionPct,
@@ -264,7 +263,7 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                   Объём{sortIndicator("volume")}
                 </th>
                 <th className="py-2 px-2 text-right cursor-pointer hover:bg-muted/40 whitespace-nowrap border-r" onClick={() => handleSort("margin")}>
-                  {meta?.marginMode === "margin" ? "Маржа%" : "Нац.%"}{sortIndicator("margin")}
+                  Маржа%{sortIndicator("margin")}
                 </th>
                 {/* FBO */}
                 <th className="py-2 px-2 text-right cursor-pointer hover:bg-muted/40 whitespace-nowrap text-blue-600" onClick={() => handleSort("fboPrice")}>

@@ -21,16 +21,16 @@ export interface OzonProductData {
 }
 
 /**
- * Режим расчёта: "markup" = наценка (от себестоимости), "margin" = маржинальность (от цены)
+ * Режим расчёта целевой цены: только маржинальность (от цены продажи)
  */
-export type MarginMode = "markup" | "margin";
+export type MarginMode = "margin";
 
 /**
- * Настройки маржинальности / наценки
+ * Настройки маржинальности (планируемая маржинальность в %)
  */
 export interface MarginSettings {
-  global: number;                // Общая наценка / маржинальность (%)
-  mode: MarginMode;             // Режим расчёта
+  global: number;                // Планируемая маржинальность (%)
+  mode: MarginMode;             // Всегда "margin"
   byCategory: Record<string, number>; // По категориям (%)
 }
 

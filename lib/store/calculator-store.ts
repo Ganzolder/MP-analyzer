@@ -19,7 +19,7 @@ interface CalculatorStore extends CalculatorState {
 
 const defaultMarginSettings: MarginSettings = {
   global: 30, // 30% по умолчанию
-  mode: "markup", // наценка по умолчанию
+  mode: "margin", // только планируемая маржинальность
   byCategory: {},
 };
 

@@ -23,8 +23,7 @@ export async function POST(request: NextRequest) {
       rfbsLogisticsCost = 0, // стоимость логистики RFBS
       productCost = 0,
       otherExpenses = 0,
-      targetMargin, // Опциональная желаемая наценка/маржинальность (%)
-      marginMode = "markup", // "markup" = наценка (от себестоимости), "margin" = маржинальность (от цены)
+      targetMargin, // Опциональная планируемая маржинальность (%)
     } = body;
 
     // Цена обязательна
@@ -361,15 +360,9 @@ export async function POST(request: NextRequest) {
     let reverseCalculation: any = null;
     
     if (targetMargin !== undefined && targetMargin !== null && totalCost > 0) {
-      // Формулы:
-      // Наценка (markup): desiredProfit = totalCost * targetMargin / 100
-      //   price = (totalCost + desiredProfit + fixedFees) / (1 - pctRate)
-      // Маржинальность (margin): profit = price * targetMargin / 100
+      // Маржинальность: profit = price * targetMargin / 100
       //   price = (totalCost + fixedFees) / (1 - pctRate - targetMargin / 100)
-      
-      const isMarginMode = marginMode === "margin";
-      const desiredProfit = isMarginMode ? 0 : totalCost * targetMargin / 100;
-      const marginFraction = isMarginMode ? targetMargin / 100 : 0;
+      const marginFraction = targetMargin / 100;
       
       const computeRequiredPrice = (
         fulfillment: "fbo" | "fbs" | "rfbs",
@@ -410,16 +403,9 @@ export async function POST(request: NextRequest) {
           const pctRate = (bracket.pct + acquiringPct) / 100;
           let requiredPrice: number;
           
-          if (isMarginMode) {
-            // Маржинальность: price = (totalCost + fixedFees) / (1 - pctRate - margin/100)
-            const denominator = 1 - pctRate - marginFraction;
-            if (denominator <= 0) continue;
-            requiredPrice = (totalCost + fixedFees) / denominator;
-          } else {
-            // Наценка: price = (totalCost + desiredProfit + fixedFees) / (1 - pctRate)
-            if (pctRate >= 1) continue;
-            requiredPrice = (totalCost + desiredProfit + fixedFees) / (1 - pctRate);
-          }
+          const denominator = 1 - pctRate - marginFraction;
+          if (denominator <= 0) continue;
+          requiredPrice = (totalCost + fixedFees) / denominator;
           
           if (requiredPrice <= bracket.maxPrice) {
             return Math.round(requiredPrice * 100) / 100;
@@ -429,14 +415,9 @@ export async function POST(request: NextRequest) {
         // Fallback — последний диапазон
         const lastBracket = brackets[brackets.length - 1];
         const pctRate = (lastBracket.pct + acquiringPct) / 100;
-        if (isMarginMode) {
-          const denominator = 1 - pctRate - marginFraction;
-          if (denominator <= 0) return 0;
-          return Math.round((totalCost + fixedFees) / denominator * 100) / 100;
-        } else {
-          if (pctRate >= 1) return 0;
-          return Math.round((totalCost + desiredProfit + fixedFees) / (1 - pctRate) * 100) / 100;
-        }
+        const denominator = 1 - pctRate - marginFraction;
+        if (denominator <= 0) return 0;
+        return Math.round((totalCost + fixedFees) / denominator * 100) / 100;
       };
       
       // Фиксированные сборы для каждого типа
@@ -455,7 +436,7 @@ export async function POST(request: NextRequest) {
       
       reverseCalculation = {
         targetMargin,
-        marginMode,
+        marginMode: "margin",
         fbo: { requiredPrice: fboRequiredPrice, currentMarkupFromCost: fboMarkupFromCost },
         fbs: { requiredPrice: fbsRequiredPrice, currentMarkupFromCost: fbsMarkupFromCost },
         rfbs: { requiredPrice: rfbsRequiredPrice, currentMarkupFromCost: rfbsMarkupFromCost },
