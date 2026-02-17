@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Info, Calculator, TrendingUp, TrendingDown, Target } from "lucide-react";
+import { Info, Calculator, TrendingUp, TrendingDown, Target, Package } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -135,6 +135,10 @@ export function OzonSingleProductCalculator() {
   // Желаемая наценка / маржинальность (опциональное поле)
   const [targetMargin, setTargetMargin] = useState<string>("");
   const [marginMode, setMarginMode] = useState<"markup" | "margin">("markup");
+
+  // Планируемые продажи и возвраты
+  const [plannedQuantity, setPlannedQuantity] = useState<string>("");
+  const [returnPercent, setReturnPercent] = useState<string>("");
 
   // Налоговый режим
   const [taxRegime, setTaxRegime] = useState<string>("none");
@@ -1180,6 +1184,59 @@ export function OzonSingleProductCalculator() {
         </CardContent>
       </Card>
 
+      {/* Планирование продаж */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Package className="h-5 w-5" />
+            Планирование продаж
+          </CardTitle>
+          <CardDescription>
+            Укажите планируемое количество продаж и процент возврата для расчёта итоговых показателей
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="plannedQuantity">Планируемое кол-во продаж, шт</Label>
+              <Input
+                id="plannedQuantity"
+                type="text"
+                value={plannedQuantity ? formatNumber(plannedQuantity) : ""}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/\s/g, "");
+                  if (val === "" || /^\d+$/.test(val)) {
+                    setPlannedQuantity(val);
+                  }
+                }}
+                placeholder="Например: 100"
+              />
+              <p className="text-xs text-muted-foreground">
+                Необязательное поле. Если указано — покажется блок «Итого по партии».
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="returnPercent">Процент возвратов, %</Label>
+              <Input
+                id="returnPercent"
+                type="text"
+                value={returnPercent ? formatNumber(returnPercent) : ""}
+                onChange={(e) => {
+                  const val = e.target.value.replace(/\s/g, "");
+                  if (val === "" || /^\d*\.?\d*$/.test(val)) {
+                    setReturnPercent(val);
+                  }
+                }}
+                placeholder="Например: 5"
+              />
+              <p className="text-xs text-muted-foreground">
+                Процент товаров, которые будут возвращены. Стоимость обратной логистики и потерянная прибыль учитываются в итогах.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Кнопка расчёта */}
       <div className="flex justify-center">
         <Button
@@ -1689,6 +1746,213 @@ export function OzonSingleProductCalculator() {
           </CardContent>
         </Card>
       )}
+
+      {/* ═══ ИТОГО ПО ПАРТИИ ═══ */}
+      {calcResult && parseInt(plannedQuantity) > 0 && (() => {
+        const qty = parseInt(plannedQuantity) || 0;
+        const retPct = parseFloat(returnPercent) || 0;
+        const returnQty = Math.round(qty * retPct / 100);
+        const soldQty = qty - returnQty;
+
+        // Расчёт налогов для каждого типа
+        const fboAll = calculateAllTaxes("fbo");
+        const fbsAll = calculateAllTaxes("fbs");
+        const rfbsAll = calculateAllTaxes("rfbs");
+
+        const selectedTax = taxRegime as keyof AllTaxCalcs;
+
+        // Прибыль с 1 шт (после налогов)
+        const fboProfit1 = fboAll[selectedTax].netProfit;
+        const fbsProfit1 = fbsAll[selectedTax].netProfit;
+        const rfbsProfit1 = rfbsAll[selectedTax].netProfit;
+
+        // Стоимость обратной логистики (возвраты) = себестоимость + логистика обратно
+        // При возврате теряется: себестоимость + все комиссии/сборы на этот товар
+        // Упрощённо: при возврате прибыль = 0, а затраты = себестоимость (товар потерян/нужно повторно отправить)
+        const cost1 = calcResult.totalCost || 0;
+        const returnCostPerItem = cost1; // При возврате теряем себестоимость
+
+        // Выручка (доход) по партии
+        const fboRevenue = soldQty * calcResult.price;
+        const fbsRevenue = soldQty * calcResult.price;
+        const rfbsRevenue = soldQty * calcResult.price;
+
+        // Прибыль от проданных
+        const fboProfitSold = soldQty * fboProfit1;
+        const fbsProfitSold = soldQty * fbsProfit1;
+        const rfbsProfitSold = soldQty * rfbsProfit1;
+
+        // Потери от возвратов
+        const returnLoss = returnQty * returnCostPerItem;
+
+        // Итоговая прибыль
+        const fboTotalProfit = Math.round((fboProfitSold - returnLoss) * 100) / 100;
+        const fbsTotalProfit = Math.round((fbsProfitSold - returnLoss) * 100) / 100;
+        const rfbsTotalProfit = Math.round((rfbsProfitSold - returnLoss) * 100) / 100;
+
+        // Инвестиции в партию (себестоимость всех товаров)
+        const totalInvestment = qty * cost1;
+
+        // ROI
+        const fboROI = totalInvestment > 0 ? Math.round(fboTotalProfit / totalInvestment * 10000) / 100 : 0;
+        const fbsROI = totalInvestment > 0 ? Math.round(fbsTotalProfit / totalInvestment * 10000) / 100 : 0;
+        const rfbsROI = totalInvestment > 0 ? Math.round(rfbsTotalProfit / totalInvestment * 10000) / 100 : 0;
+
+        const selectedLabel = [
+          { key: "none", label: "без налогов" },
+          { key: "usn6", label: "УСН 6%" },
+          { key: "usn15", label: "УСН 15%" },
+          { key: "nds22", label: "НДС+прибыль" },
+        ].find(r => r.key === taxRegime)?.label || "без налогов";
+
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Package className="h-5 w-5" />
+                Итого по партии
+              </CardTitle>
+              <CardDescription>
+                Планируемое кол-во: <strong>{qty} шт</strong>
+                {retPct > 0 && <> · Возвраты: <strong>{retPct}%</strong> ({returnQty} шт) · Продано: <strong>{soldQty} шт</strong></>}
+                {taxRegime !== "none" && <> · Налог: <strong>{selectedLabel}</strong></>}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/30">
+                      <th className="text-left py-2.5 px-3 font-medium">Показатель</th>
+                      <th className="text-right py-2.5 px-3 font-medium text-blue-600">FBO</th>
+                      <th className="text-right py-2.5 px-3 font-medium text-purple-600">FBS</th>
+                      <th className="text-right py-2.5 px-3 font-medium text-orange-600">RFBS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* Инвестиции */}
+                    <tr className="border-b">
+                      <td className="py-2.5 px-3 font-medium">
+                        Инвестиции в партию
+                        <span className="text-xs text-muted-foreground ml-1">({qty} × {fmtMoney(cost1)})</span>
+                      </td>
+                      <td className="text-right py-2.5 px-3" colSpan={3}>
+                        <span className="font-bold">{fmtMoney(totalInvestment)}</span>
+                      </td>
+                    </tr>
+
+                    {/* Выручка */}
+                    <tr className="border-b">
+                      <td className="py-2.5 px-3 font-medium">
+                        Выручка
+                        <span className="text-xs text-muted-foreground ml-1">({soldQty} × {fmtMoney(calcResult.price)})</span>
+                      </td>
+                      <td className="text-right py-2.5 px-3">{fmtMoney(fboRevenue)}</td>
+                      <td className="text-right py-2.5 px-3">{fmtMoney(fbsRevenue)}</td>
+                      <td className="text-right py-2.5 px-3">{fmtMoney(rfbsRevenue)}</td>
+                    </tr>
+
+                    {/* Прибыль от проданных */}
+                    <tr className="border-b">
+                      <td className="py-2.5 px-3 font-medium">
+                        Прибыль от продаж
+                        <span className="text-xs text-muted-foreground ml-1">({soldQty} × {fmtMoney(fboProfit1)} и т.д.)</span>
+                      </td>
+                      <td className={`text-right py-2.5 px-3 font-medium ${fboProfitSold >= 0 ? "text-green-600" : "text-red-600"}`}>
+                        {fboProfitSold >= 0 ? "+" : ""}{fmtMoney(fboProfitSold)}
+                      </td>
+                      <td className={`text-right py-2.5 px-3 font-medium ${fbsProfitSold >= 0 ? "text-green-600" : "text-red-600"}`}>
+                        {fbsProfitSold >= 0 ? "+" : ""}{fmtMoney(fbsProfitSold)}
+                      </td>
+                      <td className={`text-right py-2.5 px-3 font-medium ${rfbsProfitSold >= 0 ? "text-green-600" : "text-red-600"}`}>
+                        {rfbsProfitSold >= 0 ? "+" : ""}{fmtMoney(rfbsProfitSold)}
+                      </td>
+                    </tr>
+
+                    {/* Потери от возвратов */}
+                    {returnQty > 0 && (
+                      <tr className="border-b bg-red-50/30 dark:bg-red-950/10">
+                        <td className="py-2.5 px-3 font-medium text-red-700 dark:text-red-400">
+                          Потери от возвратов
+                          <span className="text-xs text-muted-foreground ml-1">({returnQty} шт × {fmtMoney(cost1)})</span>
+                        </td>
+                        <td className="text-right py-2.5 px-3 text-red-600" colSpan={3}>
+                          −{fmtMoney(returnLoss)}
+                        </td>
+                      </tr>
+                    )}
+
+                    {/* Итоговая прибыль */}
+                    <tr className="border-t-2 bg-muted/30">
+                      <td className="py-3 px-3 font-bold text-base">
+                        Чистая прибыль по партии
+                        {taxRegime !== "none" && (
+                          <span className="text-xs font-normal text-muted-foreground ml-1">
+                            ({selectedLabel})
+                          </span>
+                        )}
+                      </td>
+                      <td className={`text-right py-3 px-3 font-bold text-base ${fboTotalProfit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                        {fboTotalProfit >= 0 ? "+" : ""}{fmtMoney(fboTotalProfit)}
+                      </td>
+                      <td className={`text-right py-3 px-3 font-bold text-base ${fbsTotalProfit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                        {fbsTotalProfit >= 0 ? "+" : ""}{fmtMoney(fbsTotalProfit)}
+                      </td>
+                      <td className={`text-right py-3 px-3 font-bold text-base ${rfbsTotalProfit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                        {rfbsTotalProfit >= 0 ? "+" : ""}{fmtMoney(rfbsTotalProfit)}
+                      </td>
+                    </tr>
+
+                    {/* ROI */}
+                    <tr className="border-t">
+                      <td className="py-2.5 px-3 font-medium">
+                        ROI
+                        <span className="text-xs text-muted-foreground ml-1">(рентабельность инвестиций)</span>
+                      </td>
+                      <td className="text-right py-2.5 px-3">
+                        <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
+                          fboROI >= 30
+                            ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400"
+                            : fboROI >= 0
+                              ? "bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400"
+                              : "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400"
+                        }`}>
+                          {fboROI >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+                          {fboROI}%
+                        </div>
+                      </td>
+                      <td className="text-right py-2.5 px-3">
+                        <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
+                          fbsROI >= 30
+                            ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400"
+                            : fbsROI >= 0
+                              ? "bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400"
+                              : "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400"
+                        }`}>
+                          {fbsROI >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+                          {fbsROI}%
+                        </div>
+                      </td>
+                      <td className="text-right py-2.5 px-3">
+                        <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
+                          rfbsROI >= 30
+                            ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400"
+                            : rfbsROI >= 0
+                              ? "bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400"
+                              : "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400"
+                        }`}>
+                          {rfbsROI >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+                          {rfbsROI}%
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
     </div>
   );
 }
