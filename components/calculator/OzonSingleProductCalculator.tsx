@@ -434,48 +434,62 @@ export function OzonSingleProductCalculator() {
     return v.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " ₽";
   };
 
-  // ─── Расчёт налогов ──────────────────────────────────────────
-  const calculateTaxForFulfillment = (fulfillmentType: "fbo" | "fbs" | "rfbs") => {
-    if (!calcResult || taxRegime === "none") {
-      return { usnTax: 0, vatPayable: 0, profitTax: 0, totalTax: 0 };
-    }
+  // ─── Расчёт ВСЕХ налоговых режимов для одного типа отгрузки ──
+  interface TaxCalc {
+    usnTax: number;
+    vatPayable: number;
+    profitTax: number;
+    totalTax: number;
+    netProfit: number;
+    netMargin: number; // маржинальность (от цены)
+  }
+
+  interface AllTaxCalcs {
+    none: TaxCalc;
+    usn6: TaxCalc;
+    usn15: TaxCalc;
+    nds22: TaxCalc;
+  }
+
+  const calculateAllTaxes = (fulfillmentType: "fbo" | "fbs" | "rfbs"): AllTaxCalcs => {
+    const empty: TaxCalc = { usnTax: 0, vatPayable: 0, profitTax: 0, totalTax: 0, netProfit: 0, netMargin: 0 };
+    if (!calcResult) return { none: empty, usn6: empty, usn15: empty, nds22: empty };
 
     const fulfillment = calcResult[fulfillmentType];
-    const accrual = calcResult.price - fulfillment.totalFees; // Начисление от Озон = Цена - все сборы
+    const profit = fulfillment.profit;
+    const accrual = calcResult.price - fulfillment.totalFees;
     const cost = calcResult.productCost || 0;
     const otherExp = calcResult.otherExpenses || 0;
+    const price = calcResult.price;
 
-    if (taxRegime === "usn6") {
-      // УСН 6% от начислений (Цена - все сборы)
-      const usnTax = Math.round(accrual * 6 / 100 * 100) / 100;
-      return { usnTax, vatPayable: 0, profitTax: 0, totalTax: usnTax };
-    }
+    const mkResult = (totalTax: number, extra: Partial<TaxCalc> = {}): TaxCalc => {
+      const netProfit = Math.round((profit - totalTax) * 100) / 100;
+      const netMargin = price > 0 ? Math.round(netProfit / price * 10000) / 100 : 0;
+      return { usnTax: 0, vatPayable: 0, profitTax: 0, totalTax, netProfit, netMargin, ...extra };
+    };
 
-    if (taxRegime === "usn15") {
-      // УСН 15% от (Цена - все сборы - себестоимость - прочие расходы)
-      const taxBase = accrual - cost - otherExp;
-      const usnTax = taxBase > 0 ? Math.round(taxBase * 15 / 100 * 100) / 100 : 0;
-      return { usnTax, vatPayable: 0, profitTax: 0, totalTax: usnTax };
-    }
+    // Без налога
+    const none = mkResult(0);
 
-    if (taxRegime === "nds22") {
-      // НДС к уплате = (Цена - все сборы) * 22/122 - себестоимость * 22/122
-      const vatPayable = Math.round((accrual * 22 / 122 - cost * 22 / 122) * 100) / 100;
+    // УСН 6%
+    const usn6Tax = Math.round(accrual * 6 / 100 * 100) / 100;
+    const usn6 = mkResult(usn6Tax, { usnTax: usn6Tax });
 
-      // Налог на прибыль 25%:
-      // База = Доходы (без НДС) − Расходы (без НДС)
-      // Доходы без НДС = (Цена - все сборы) * 100/122
-      // Расходы без НДС = себестоимость * 100/122 + прочие расходы
-      const incomeNoVat = accrual * 100 / 122;
-      const expensesNoVat = cost * 100 / 122 + otherExp;
-      const profitTaxBase = incomeNoVat - expensesNoVat;
-      const profitTax = profitTaxBase > 0 ? Math.round(profitTaxBase * 25 / 100 * 100) / 100 : 0;
+    // УСН 15%
+    const usn15Base = accrual - cost - otherExp;
+    const usn15Tax = usn15Base > 0 ? Math.round(usn15Base * 15 / 100 * 100) / 100 : 0;
+    const usn15 = mkResult(usn15Tax, { usnTax: usn15Tax });
 
-      const totalTax = (vatPayable > 0 ? vatPayable : 0) + profitTax;
-      return { usnTax: 0, vatPayable, profitTax, totalTax };
-    }
+    // НДС 22% + Налог на прибыль 25%
+    const vatPayable = Math.round((accrual * 22 / 122 - cost * 22 / 122) * 100) / 100;
+    const incomeNoVat = accrual * 100 / 122;
+    const expensesNoVat = cost * 100 / 122 + otherExp;
+    const profitTaxBase = incomeNoVat - expensesNoVat;
+    const profitTax = profitTaxBase > 0 ? Math.round(profitTaxBase * 25 / 100 * 100) / 100 : 0;
+    const nds22Total = (vatPayable > 0 ? vatPayable : 0) + profitTax;
+    const nds22 = mkResult(nds22Total, { vatPayable, profitTax });
 
-    return { usnTax: 0, vatPayable: 0, profitTax: 0, totalTax: 0 };
+    return { none, usn6, usn15, nds22 };
   };
 
   return (
@@ -1365,9 +1379,9 @@ export function OzonSingleProductCalculator() {
                   )}
 
                   {/* Прибыль до налогов */}
-                  <tr className={taxRegime !== "none" ? "bg-muted/10" : "bg-muted/30"}>
+                  <tr className="bg-muted/10">
                     <td className="py-3 px-3 font-bold text-base">
-                      {taxRegime !== "none" ? "Прибыль до налогов" : "Прибыль"}
+                      Прибыль до налогов
                     </td>
                     <td className={`text-right py-3 px-3 font-bold text-base ${calcResult.fbo.profit >= 0 ? "text-green-600" : "text-red-600"}`}>
                       {calcResult.fbo.profit >= 0 ? "+" : ""}{fmtMoney(calcResult.fbo.profit)}
@@ -1380,215 +1394,200 @@ export function OzonSingleProductCalculator() {
                     </td>
                   </tr>
 
-                  {/* ═══ НАЛОГИ ═══ */}
-                  {taxRegime !== "none" && (() => {
-                    const fboTax = calculateTaxForFulfillment("fbo");
-                    const fbsTax = calculateTaxForFulfillment("fbs");
-                    const rfbsTax = calculateTaxForFulfillment("rfbs");
+                  {/* ═══ СРАВНЕНИЕ ВСЕХ НАЛОГОВЫХ РЕЖИМОВ ═══ */}
+                  {(() => {
+                    const fboAll = calculateAllTaxes("fbo");
+                    const fbsAll = calculateAllTaxes("fbs");
+                    const rfbsAll = calculateAllTaxes("rfbs");
 
-                    const fboNetProfit = Math.round((calcResult.fbo.profit - fboTax.totalTax) * 100) / 100;
-                    const fbsNetProfit = Math.round((calcResult.fbs.profit - fbsTax.totalTax) * 100) / 100;
-                    const rfbsNetProfit = Math.round((calcResult.rfbs.profit - rfbsTax.totalTax) * 100) / 100;
+                    const regimes: { key: string; label: string; sublabel: string }[] = [
+                      { key: "none", label: "Без налога", sublabel: "0%" },
+                      { key: "usn6", label: "УСН Доходы", sublabel: "6% от начислений" },
+                      { key: "usn15", label: "УСН Доходы−Расходы", sublabel: "15%" },
+                      { key: "nds22", label: "НДС 22% + Прибыль 25%", sublabel: "ОСНО" },
+                    ];
 
-                    const fboNetMargin = calcResult.price > 0 ? Math.round(fboNetProfit / calcResult.price * 10000) / 100 : 0;
-                    const fbsNetMargin = calcResult.price > 0 ? Math.round(fbsNetProfit / calcResult.price * 10000) / 100 : 0;
-                    const rfbsNetMargin = calcResult.price > 0 ? Math.round(rfbsNetProfit / calcResult.price * 10000) / 100 : 0;
+                    // Находим лучший режим (максимальная чистая прибыль для FBO)
+                    const bestRegime = regimes.reduce((best, r) => {
+                      const profit = fboAll[r.key as keyof AllTaxCalcs].netProfit;
+                      return profit > fboAll[best as keyof AllTaxCalcs].netProfit ? r.key : best;
+                    }, "none");
 
                     return (
                       <>
-                        {/* УСН 6% */}
-                        {taxRegime === "usn6" && (
-                          <tr className="border-b bg-orange-50/30 dark:bg-orange-950/10">
-                            <td className="py-2.5 px-3">
-                              Налог УСН 6%
-                              <span className="text-xs text-muted-foreground ml-1">(от начислений)</span>
-                            </td>
-                            <td className="text-right py-2.5 px-3 text-orange-600">−{fmtMoney(fboTax.usnTax)}</td>
-                            <td className="text-right py-2.5 px-3 text-orange-600">−{fmtMoney(fbsTax.usnTax)}</td>
-                            <td className="text-right py-2.5 px-3 text-orange-600">−{fmtMoney(rfbsTax.usnTax)}</td>
-                          </tr>
-                        )}
-
-                        {/* УСН 15% */}
-                        {taxRegime === "usn15" && (
-                          <tr className="border-b bg-orange-50/30 dark:bg-orange-950/10">
-                            <td className="py-2.5 px-3">
-                              Налог УСН 15%
-                              <span className="text-xs text-muted-foreground ml-1">(доходы − расходы)</span>
-                            </td>
-                            <td className="text-right py-2.5 px-3 text-orange-600">−{fmtMoney(fboTax.usnTax)}</td>
-                            <td className="text-right py-2.5 px-3 text-orange-600">−{fmtMoney(fbsTax.usnTax)}</td>
-                            <td className="text-right py-2.5 px-3 text-orange-600">−{fmtMoney(rfbsTax.usnTax)}</td>
-                          </tr>
-                        )}
-
-                        {/* НДС 22% + Налог на прибыль 25% */}
-                        {taxRegime === "nds22" && (
-                          <>
-                            <tr className="border-b bg-orange-50/30 dark:bg-orange-950/10">
-                              <td className="py-2.5 px-3">
-                                НДС к уплате
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Info className="h-3.5 w-3.5 text-muted-foreground inline ml-1 cursor-help" />
-                                    </TooltipTrigger>
-                                    <TooltipContent side="right" className="max-w-sm">
-                                      <p className="text-xs">
-                                        НДС = (Цена − сборы) × 22/122 − Себестоимость × 22/122
-                                      </p>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                              </td>
-                              <td className="text-right py-2.5 px-3 text-orange-600">
-                                {fboTax.vatPayable > 0 ? `−${fmtMoney(fboTax.vatPayable)}` : fmtMoney(fboTax.vatPayable)}
-                              </td>
-                              <td className="text-right py-2.5 px-3 text-orange-600">
-                                {fbsTax.vatPayable > 0 ? `−${fmtMoney(fbsTax.vatPayable)}` : fmtMoney(fbsTax.vatPayable)}
-                              </td>
-                              <td className="text-right py-2.5 px-3 text-orange-600">
-                                {rfbsTax.vatPayable > 0 ? `−${fmtMoney(rfbsTax.vatPayable)}` : fmtMoney(rfbsTax.vatPayable)}
-                              </td>
-                            </tr>
-                            <tr className="border-b bg-orange-50/30 dark:bg-orange-950/10">
-                              <td className="py-2.5 px-3">
-                                Налог на прибыль 25%
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Info className="h-3.5 w-3.5 text-muted-foreground inline ml-1 cursor-help" />
-                                    </TooltipTrigger>
-                                    <TooltipContent side="right" className="max-w-sm">
-                                      <p className="text-xs">
-                                        База = Доходы (без НДС) − Расходы (без НДС)<br />
-                                        Налог = База × 25%
-                                      </p>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                              </td>
-                              <td className="text-right py-2.5 px-3 text-orange-600">−{fmtMoney(fboTax.profitTax)}</td>
-                              <td className="text-right py-2.5 px-3 text-orange-600">−{fmtMoney(fbsTax.profitTax)}</td>
-                              <td className="text-right py-2.5 px-3 text-orange-600">−{fmtMoney(rfbsTax.profitTax)}</td>
-                            </tr>
-                          </>
-                        )}
-
-                        {/* Чистая прибыль (после налогов) */}
-                        <tr className="bg-muted/30 border-t-2">
-                          <td className="py-3 px-3 font-bold text-base">
-                            Чистая прибыль
-                            <span className="text-xs font-normal text-muted-foreground ml-1">
-                              (после {taxRegime === "usn6" ? "УСН 6%" : taxRegime === "usn15" ? "УСН 15%" : "НДС + прибыль"})
-                            </span>
-                          </td>
-                          <td className={`text-right py-3 px-3 font-bold text-base ${fboNetProfit >= 0 ? "text-green-600" : "text-red-600"}`}>
-                            {fboNetProfit >= 0 ? "+" : ""}{fmtMoney(fboNetProfit)}
-                          </td>
-                          <td className={`text-right py-3 px-3 font-bold text-base ${fbsNetProfit >= 0 ? "text-green-600" : "text-red-600"}`}>
-                            {fbsNetProfit >= 0 ? "+" : ""}{fmtMoney(fbsNetProfit)}
-                          </td>
-                          <td className={`text-right py-3 px-3 font-bold text-base ${rfbsNetProfit >= 0 ? "text-green-600" : "text-red-600"}`}>
-                            {rfbsNetProfit >= 0 ? "+" : ""}{fmtMoney(rfbsNetProfit)}
-                          </td>
-                        </tr>
-
-                        {/* Маржинальность после налогов (от цены) */}
-                        <tr className="border-t">
-                          <td className="py-3 px-3 font-medium">
-                            Маржинальность
-                            <span className="text-xs text-muted-foreground ml-1">(чистая, от цены)</span>
-                          </td>
-                          <td className="text-right py-3 px-3">
-                            <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
-                              fboNetMargin >= 20
-                                ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400"
-                                : fboNetMargin >= 0
-                                  ? "bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400"
-                                  : "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400"
-                            }`}>
-                              {fboNetMargin >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
-                              {fboNetMargin}%
-                            </div>
-                          </td>
-                          <td className="text-right py-3 px-3">
-                            <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
-                              fbsNetMargin >= 20
-                                ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400"
-                                : fbsNetMargin >= 0
-                                  ? "bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400"
-                                  : "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400"
-                            }`}>
-                              {fbsNetMargin >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
-                              {fbsNetMargin}%
-                            </div>
-                          </td>
-                          <td className="text-right py-3 px-3">
-                            <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
-                              rfbsNetMargin >= 20
-                                ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400"
-                                : rfbsNetMargin >= 0
-                                  ? "bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400"
-                                  : "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400"
-                            }`}>
-                              {rfbsNetMargin >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
-                              {rfbsNetMargin}%
+                        {/* Заголовок секции */}
+                        <tr className="border-t-2">
+                          <td colSpan={4} className="py-2 px-3 bg-slate-100/60 dark:bg-slate-900/30">
+                            <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
+                              <span>Сравнение налоговых режимов</span>
+                              <span className="text-xs font-normal text-muted-foreground">
+                                (выбранный: {regimes.find(r => r.key === taxRegime)?.label || "Без налога"})
+                              </span>
                             </div>
                           </td>
                         </tr>
+
+                        {regimes.map((regime) => {
+                          const isSelected = taxRegime === regime.key;
+                          const fbo = fboAll[regime.key as keyof AllTaxCalcs];
+                          const fbs = fbsAll[regime.key as keyof AllTaxCalcs];
+                          const rfbs = rfbsAll[regime.key as keyof AllTaxCalcs];
+                          const isBest = regime.key === bestRegime;
+
+                          return (
+                            <tr
+                              key={regime.key}
+                              className={`border-b cursor-pointer transition-colors ${
+                                isSelected
+                                  ? "bg-amber-50/60 dark:bg-amber-950/20 ring-1 ring-inset ring-amber-300 dark:ring-amber-700"
+                                  : "hover:bg-muted/20"
+                              }`}
+                              onClick={() => setTaxRegime(regime.key)}
+                              title={`Нажмите, чтобы выбрать «${regime.label}»`}
+                            >
+                              <td className="py-2 px-3">
+                                <div className="flex items-center gap-2">
+                                  {/* Радио-индикатор */}
+                                  <div className={`w-3.5 h-3.5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                                    isSelected ? "border-amber-500 bg-amber-500" : "border-muted-foreground/40"
+                                  }`}>
+                                    {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                                  </div>
+                                  <div>
+                                    <span className={`text-sm ${isSelected ? "font-bold" : "font-medium"}`}>
+                                      {regime.label}
+                                    </span>
+                                    <span className="text-xs text-muted-foreground ml-1.5">
+                                      {regime.sublabel}
+                                    </span>
+                                    {isBest && regime.key !== "none" && (
+                                      <Badge variant="outline" className="ml-2 text-[10px] px-1.5 py-0 text-green-600 border-green-300">
+                                        выгоднее
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
+                                {/* Детализация для НДС */}
+                                {regime.key === "nds22" && fbo.totalTax > 0 && (
+                                  <div className="text-[10px] text-muted-foreground ml-5.5 mt-0.5">
+                                    НДС: {fmtMoney(fbo.vatPayable)} + Прибыль: {fmtMoney(fbo.profitTax)} (FBO)
+                                  </div>
+                                )}
+                              </td>
+                              <td className="text-right py-2 px-3">
+                                <div className="space-y-0.5">
+                                  <div className={`text-sm ${isSelected ? "font-bold" : "font-medium"} ${fbo.netProfit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                                    {fbo.netProfit >= 0 ? "+" : ""}{fmtMoney(fbo.netProfit)}
+                                  </div>
+                                  {fbo.totalTax > 0 && (
+                                    <div className="text-[10px] text-orange-500">−{fmtMoney(fbo.totalTax)}</div>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="text-right py-2 px-3">
+                                <div className="space-y-0.5">
+                                  <div className={`text-sm ${isSelected ? "font-bold" : "font-medium"} ${fbs.netProfit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                                    {fbs.netProfit >= 0 ? "+" : ""}{fmtMoney(fbs.netProfit)}
+                                  </div>
+                                  {fbs.totalTax > 0 && (
+                                    <div className="text-[10px] text-orange-500">−{fmtMoney(fbs.totalTax)}</div>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="text-right py-2 px-3">
+                                <div className="space-y-0.5">
+                                  <div className={`text-sm ${isSelected ? "font-bold" : "font-medium"} ${rfbs.netProfit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                                    {rfbs.netProfit >= 0 ? "+" : ""}{fmtMoney(rfbs.netProfit)}
+                                  </div>
+                                  {rfbs.totalTax > 0 && (
+                                    <div className="text-[10px] text-orange-500">−{fmtMoney(rfbs.totalTax)}</div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+
+                        {/* Итоговая строка — выбранный режим */}
+                        {(() => {
+                          const selected = taxRegime as keyof AllTaxCalcs;
+                          const fbo = fboAll[selected];
+                          const fbs = fbsAll[selected];
+                          const rfbs = rfbsAll[selected];
+                          const selectedLabel = regimes.find(r => r.key === taxRegime)?.label || "Без налога";
+
+                          return (
+                            <>
+                              <tr className="bg-muted/30 border-t-2">
+                                <td className="py-3 px-3 font-bold text-base">
+                                  Чистая прибыль
+                                  <span className="text-xs font-normal text-muted-foreground ml-1">
+                                    ({selectedLabel})
+                                  </span>
+                                </td>
+                                <td className={`text-right py-3 px-3 font-bold text-base ${fbo.netProfit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                                  {fbo.netProfit >= 0 ? "+" : ""}{fmtMoney(fbo.netProfit)}
+                                </td>
+                                <td className={`text-right py-3 px-3 font-bold text-base ${fbs.netProfit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                                  {fbs.netProfit >= 0 ? "+" : ""}{fmtMoney(fbs.netProfit)}
+                                </td>
+                                <td className={`text-right py-3 px-3 font-bold text-base ${rfbs.netProfit >= 0 ? "text-green-600" : "text-red-600"}`}>
+                                  {rfbs.netProfit >= 0 ? "+" : ""}{fmtMoney(rfbs.netProfit)}
+                                </td>
+                              </tr>
+
+                              {/* Маржинальность (чистая, от цены) */}
+                              <tr className="border-t">
+                                <td className="py-3 px-3 font-medium">
+                                  Маржинальность
+                                  <span className="text-xs text-muted-foreground ml-1">(чистая, от цены)</span>
+                                </td>
+                                <td className="text-right py-3 px-3">
+                                  <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
+                                    fbo.netMargin >= 20
+                                      ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400"
+                                      : fbo.netMargin >= 0
+                                        ? "bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400"
+                                        : "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400"
+                                  }`}>
+                                    {fbo.netMargin >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+                                    {fbo.netMargin}%
+                                  </div>
+                                </td>
+                                <td className="text-right py-3 px-3">
+                                  <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
+                                    fbs.netMargin >= 20
+                                      ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400"
+                                      : fbs.netMargin >= 0
+                                        ? "bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400"
+                                        : "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400"
+                                  }`}>
+                                    {fbs.netMargin >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+                                    {fbs.netMargin}%
+                                  </div>
+                                </td>
+                                <td className="text-right py-3 px-3">
+                                  <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
+                                    rfbs.netMargin >= 20
+                                      ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400"
+                                      : rfbs.netMargin >= 0
+                                        ? "bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400"
+                                        : "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400"
+                                  }`}>
+                                    {rfbs.netMargin >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
+                                    {rfbs.netMargin}%
+                                  </div>
+                                </td>
+                              </tr>
+                            </>
+                          );
+                        })()}
                       </>
                     );
                   })()}
 
-                  {/* Маржинальность (от цены) — без налогов или когда налог не выбран */}
-                  {taxRegime === "none" && (
-                  <tr className="border-t">
-                    <td className="py-3 px-3 font-medium">
-                      Маржинальность
-                      <span className="text-xs font-normal text-muted-foreground ml-1">(от цены)</span>
-                    </td>
-                    <td className="text-right py-3 px-3">
-                      <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
-                        calcResult.fbo.margin >= 20
-                          ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400"
-                          : calcResult.fbo.margin >= 0
-                            ? "bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400"
-                            : "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400"
-                      }`}>
-                        {calcResult.fbo.margin >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
-                        {calcResult.fbo.margin}%
-                      </div>
-                    </td>
-                    <td className="text-right py-3 px-3">
-                      <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
-                        calcResult.fbs.margin >= 20
-                          ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400"
-                          : calcResult.fbs.margin >= 0
-                            ? "bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400"
-                            : "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400"
-                      }`}>
-                        {calcResult.fbs.margin >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
-                        {calcResult.fbs.margin}%
-                      </div>
-                    </td>
-                    <td className="text-right py-3 px-3">
-                      <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-sm font-bold ${
-                        calcResult.rfbs.margin >= 20
-                          ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-400"
-                          : calcResult.rfbs.margin >= 0
-                            ? "bg-yellow-100 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400"
-                            : "bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400"
-                      }`}>
-                        {calcResult.rfbs.margin >= 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
-                        {calcResult.rfbs.margin}%
-                      </div>
-                    </td>
-                  </tr>
-                  )}
-
                   {/* Наценка (от себестоимости) */}
-                  {taxRegime === "none" && calcResult.totalCost > 0 && (
+                  {calcResult.totalCost > 0 && (
                   <tr className="border-t">
                     <td className="py-3 px-3 font-medium">
                       Наценка
