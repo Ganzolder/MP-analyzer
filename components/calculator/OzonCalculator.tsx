@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
-import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2, X, Calculator, Loader2 } from "lucide-react";
+import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2, X, Calculator, Loader2, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useCalculatorStore } from "@/lib/store/calculator-store";
 import { parseOzonFile } from "@/lib/calculator/parsers/ozon-file-parser";
 import { useToast } from "@/components/ui/use-toast";
@@ -35,6 +36,10 @@ export function OzonCalculator() {
   // Параметры отгрузки для массового расчёта
   const [pickupPointType, setPickupPointType] = useState<string>("pvz-ppz");
   const [acceptanceType, setAcceptanceType] = useState<string>("employee");
+
+  // Прочие расходы и налоговый режим
+  const [otherExpenses, setOtherExpenses] = useState<string>("");
+  const [taxRegime, setTaxRegime] = useState<string>("none");
 
   // Тарифы из настроек (загружаются из БД)
   const [tariffLastMileFee, setTariffLastMileFee] = useState<number>(25);
@@ -217,6 +222,8 @@ export function OzonCalculator() {
           pickupPointType,
           acceptanceType,
           marginMode: "margin",
+          otherExpenses: parseFloat(otherExpenses) || 0,
+          taxRegime: taxRegime || "none",
         }),
       });
 
@@ -443,6 +450,69 @@ export function OzonCalculator() {
                       </div>
                     </div>
                   )}
+                </CardContent>
+              </Card>
+
+              {/* Доп. затраты и налоги */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Дополнительные затраты и налоги</CardTitle>
+                  <CardDescription>
+                    Прочие расходы на единицу товара и налоговый режим — применяются ко всем товарам
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="bulk-otherExpenses">Прочие затраты, ₽ на шт</Label>
+                      <Input
+                        id="bulk-otherExpenses"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={otherExpenses}
+                        onChange={(e) => setOtherExpenses(e.target.value)}
+                        placeholder="0.00"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Не связанные с товаром напрямую. Например, маркетинг или административные расходы
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Label htmlFor="bulk-taxRegime">Налоговый режим</Label>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Info className="h-4 w-4 text-muted-foreground cursor-help" />
+                            </TooltipTrigger>
+                            <TooltipContent className="max-w-sm">
+                              <p className="text-xs">
+                                <strong>Без налога (0%)</strong> — расчёт без учёта налогов.<br />
+                                <strong>УСН Доходы (6%)</strong> — 6% от начислений Озон (Цена − все сборы).<br />
+                                <strong>УСН Доходы−Расходы (15%)</strong> — 15% от (начисления − себестоимость − прочие расходы).<br />
+                                <strong>НДС 22%</strong> — НДС к уплате + налог на прибыль 25%.
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                      <Select value={taxRegime} onValueChange={setTaxRegime}>
+                        <SelectTrigger id="bulk-taxRegime" className="bg-white dark:bg-background">
+                          <SelectValue placeholder="Выберите налоговый режим" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Без налога (0%)</SelectItem>
+                          <SelectItem value="usn6">УСН Доходы (6%)</SelectItem>
+                          <SelectItem value="usn15">УСН Доходы−Расходы (15%)</SelectItem>
+                          <SelectItem value="nds22">НДС 22% + Налог на прибыль 25%</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Налоги учитываются при расчёте рекомендуемой цены и итоговой прибыли
+                      </p>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
 

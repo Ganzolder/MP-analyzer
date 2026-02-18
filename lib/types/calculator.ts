@@ -74,9 +74,12 @@ export interface BulkCalcFulfillment {
   deliveryToPickup: number;
   acquiringFee: number;
   totalFees: number;
-  profit: number;
-  marginPct: number; // маржинальность (от цены продажи)
-  markupPct: number; // наценка (от себестоимости)
+  profit: number;           // прибыль до налога
+  marginPct: number;        // маржинальность (от цены продажи) до налога
+  markupPct: number;        // наценка (от себестоимости) до налога
+  taxAmount: number;        // сумма налога
+  netProfit: number;        // чистая прибыль после налога
+  netMarginPct: number;     // маржинальность после налога
 }
 
 /**
@@ -87,6 +90,7 @@ export interface BulkCalcResult {
   name: string;
   category: string;
   cost: number;
+  otherExpenses: number;     // прочие затраты на шт
   volumeLiters: number;
   targetMargin: number;
   fbo: BulkCalcFulfillment;

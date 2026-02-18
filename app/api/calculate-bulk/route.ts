@@ -18,6 +18,8 @@ export async function POST(request: NextRequest) {
       acceptanceType = "employee",
       deliveryToPickupPoint, // из БД если не передан
       lastMileFee, // из БД если не передан
+      otherExpenses = 0, // прочие затраты на единицу товара
+      taxRegime = "none", // "none" | "usn6" | "usn15" | "nds22"
     } = body;
 
     if (!Array.isArray(products) || products.length === 0) {
@@ -257,6 +259,29 @@ export async function POST(request: NextRequest) {
       return result;
     }
 
+    // Формула расчёта цены с учётом налогового режима
+    // Маржинальность m = netProfit / price, где netProfit зависит от налогового режима
+    const priceFormula = (
+      pctRate: number,
+      fixedFees: number,
+      m: number,
+      totalCost: number,
+      regime: string
+    ): { numerator: number; denominator: number } => {
+      const oneMinusPct = 1 - pctRate;
+      if (regime === "usn6") {
+        return { numerator: 0.94 * fixedFees + totalCost, denominator: 0.94 * oneMinusPct - m };
+      }
+      if (regime === "usn15") {
+        return { numerator: 0.85 * (fixedFees + totalCost), denominator: 0.85 * oneMinusPct - m };
+      }
+      if (regime === "nds22") {
+        const k = 75 / 122;
+        return { numerator: (fixedFees + totalCost) * k, denominator: k * oneMinusPct - m };
+      }
+      return { numerator: totalCost + fixedFees, denominator: oneMinusPct - m };
+    };
+
     // Алгебраический расчёт рекомендуемой цены по планируемой маржинальности
     function computeRecommendedPrice(
       commission: typeof allCommissions[0] | null,
@@ -266,6 +291,7 @@ export async function POST(request: NextRequest) {
       fixedFees: number
     ): number {
       const marginFraction = targetMargin / 100;
+      const regime = String(taxRegime || "none");
 
       // Ценовые диапазоны комиссий
       type Bracket = { maxPrice: number; pct: number };
@@ -302,11 +328,9 @@ export async function POST(request: NextRequest) {
 
       for (const bracket of brackets) {
         const pctRate = (bracket.pct + acquiringPct) / 100;
-        let requiredPrice: number;
-
-        const denominator = 1 - pctRate - marginFraction;
+        const { numerator, denominator } = priceFormula(pctRate, fixedFees, marginFraction, totalCost, regime);
         if (denominator <= 0) continue;
-        requiredPrice = (totalCost + fixedFees) / denominator;
+        const requiredPrice = numerator / denominator;
 
         if (requiredPrice <= bracket.maxPrice) {
           return Math.round(requiredPrice * 100) / 100;
@@ -316,9 +340,38 @@ export async function POST(request: NextRequest) {
       // Fallback — последний диапазон
       const last = brackets[brackets.length - 1];
       const pctRate = (last.pct + acquiringPct) / 100;
-      const denominator = 1 - pctRate - marginFraction;
+      const { numerator, denominator } = priceFormula(pctRate, fixedFees, marginFraction, totalCost, regime);
       if (denominator <= 0) return 0;
-      return Math.round((totalCost + fixedFees) / denominator * 100) / 100;
+      return Math.round((numerator / denominator) * 100) / 100;
+    }
+
+    // Расчёт налога для одного типа отгрузки
+    function calculateTax(
+      price: number,
+      totalFees: number,
+      totalCost: number,
+      otherExp: number,
+      regime: string
+    ): number {
+      const accrual = price - totalFees; // сумма к начислению
+      const profit = accrual - totalCost;
+      if (regime === "usn6") {
+        return Math.round(accrual * 6 / 100 * 100) / 100;
+      }
+      if (regime === "usn15") {
+        const base = accrual - totalCost; // totalCost уже включает otherExp
+        return base > 0 ? Math.round(base * 15 / 100 * 100) / 100 : 0;
+      }
+      if (regime === "nds22") {
+        const cost = totalCost - otherExp; // себестоимость без прочих расходов
+        const vatPayable = Math.round((accrual * 22 / 122 - cost * 22 / 122) * 100) / 100;
+        const incomeNoVat = accrual * 100 / 122;
+        const expensesNoVat = cost * 100 / 122 + otherExp;
+        const profitTaxBase = incomeNoVat - expensesNoVat;
+        const profitTax = profitTaxBase > 0 ? Math.round(profitTaxBase * 25 / 100 * 100) / 100 : 0;
+        return (vatPayable > 0 ? vatPayable : 0) + profitTax;
+      }
+      return 0; // "none"
     }
 
     // Полный расчёт для одного типа отгрузки при заданной цене
@@ -330,6 +383,8 @@ export async function POST(request: NextRequest) {
       dispatchFee: number,
       deliveryFee: number,
       totalCost: number,
+      otherExp: number,
+      regime: string,
     ): BulkCalcFulfillment {
       const commPct = getCommissionPct(commission, fulfillment, price);
       const commAmount = Math.round(price * commPct / 100 * 100) / 100;
@@ -338,6 +393,11 @@ export async function POST(request: NextRequest) {
       const profit = Math.round((price - totalFees - totalCost) * 100) / 100;
       const marginPct = price > 0 ? Math.round(profit / price * 10000) / 100 : 0; // маржинальность
       const markupPct = totalCost > 0 ? Math.round(profit / totalCost * 10000) / 100 : 0; // наценка
+
+      // Налог
+      const taxAmount = calculateTax(price, totalFees, totalCost, otherExp, regime);
+      const netProfit = Math.round((profit - taxAmount) * 100) / 100;
+      const netMarginPct = price > 0 ? Math.round(netProfit / price * 10000) / 100 : 0;
 
       return {
         recommendedPrice: price,
@@ -351,6 +411,9 @@ export async function POST(request: NextRequest) {
         profit,
         marginPct,
         markupPct,
+        taxAmount,
+        netProfit,
+        netMarginPct,
       };
     }
 
@@ -373,7 +436,7 @@ export async function POST(request: NextRequest) {
 
         if (volumeLiters <= 0 || cost <= 0) {
           results.push({
-            article, name, category, cost, volumeLiters,
+            article, name, category, cost, otherExpenses: parseFloat(otherExpenses) || 0, volumeLiters,
             targetMargin: 0,
             fbo: emptyFulfillment(),
             fbs: emptyFulfillment(),
@@ -385,7 +448,8 @@ export async function POST(request: NextRequest) {
 
         // Определяем маржу: из товара → из категории → глобальная
         const targetMargin = marginPercent ?? (categoryMargins[category] as number) ?? globalMargin;
-        const totalCost = cost; // Для массового расчёта прочие расходы = 0
+        const otherExp = parseFloat(otherExpenses) || 0;
+        const totalCost = cost + otherExp;
         const commission = findCommission(category);
 
         // Рассчитываем рекомендуемую цену для каждого типа отгрузки
@@ -407,7 +471,7 @@ export async function POST(request: NextRequest) {
           ? computeRecommendedPrice(commission, "fbo", totalCost, targetMargin, fboFinalShipping + fboFixedBase)
           : fboPrice;
 
-        const fbo = calculateFulfillment(commission, "fbo", fboFinalPrice, fboFinalShipping, 0, resolvedLastMileFee, totalCost);
+        const fbo = calculateFulfillment(commission, "fbo", fboFinalPrice, fboFinalShipping, 0, resolvedLastMileFee, totalCost, otherExp, taxRegime);
 
         // --- FBS ---
         const fbsFixedBase = fbsDispatchFee + resolvedDeliveryToPickupPoint;
@@ -423,14 +487,14 @@ export async function POST(request: NextRequest) {
           ? computeRecommendedPrice(commission, "fbs", totalCost, targetMargin, fbsFinalShipping + fbsFixedBase)
           : fbsPrice;
 
-        const fbs = calculateFulfillment(commission, "fbs", fbsFinalPrice, fbsFinalShipping, fbsDispatchFee, resolvedDeliveryToPickupPoint, totalCost);
+        const fbs = calculateFulfillment(commission, "fbs", fbsFinalPrice, fbsFinalShipping, fbsDispatchFee, resolvedDeliveryToPickupPoint, totalCost, otherExp, taxRegime);
 
         // --- RFBS ---
         const rfbsPrice = computeRecommendedPrice(commission, "rfbs", totalCost, targetMargin, 0);
-        const rfbs = calculateFulfillment(commission, "rfbs", rfbsPrice, 0, 0, 0, totalCost);
+        const rfbs = calculateFulfillment(commission, "rfbs", rfbsPrice, 0, 0, 0, totalCost, otherExp, taxRegime);
 
         results.push({
-          article, name, category, cost, volumeLiters, targetMargin,
+          article, name, category, cost, otherExpenses: otherExp, volumeLiters, targetMargin,
           fbo, fbs, rfbs,
         });
       } catch (err: any) {
@@ -439,6 +503,7 @@ export async function POST(request: NextRequest) {
           name: product.name || "",
           category: product.category || "",
           cost: product.cost || 0,
+          otherExpenses: parseFloat(otherExpenses) || 0,
           volumeLiters: product.volumeLiters || 0,
           targetMargin: 0,
           fbo: emptyFulfillment(),
@@ -463,6 +528,8 @@ export async function POST(request: NextRequest) {
           pickupPointType,
           acceptanceType,
           deliveryToPickupPoint: resolvedDeliveryToPickupPoint,
+          otherExpenses: parseFloat(otherExpenses) || 0,
+          taxRegime: taxRegime || "none",
         },
       },
     });
@@ -488,5 +555,8 @@ function emptyFulfillment(): BulkCalcFulfillment {
     profit: 0,
     marginPct: 0,
     markupPct: 0,
+    taxAmount: 0,
+    netProfit: 0,
+    netMarginPct: 0,
   };
 }

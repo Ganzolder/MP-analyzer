@@ -18,6 +18,13 @@ import {
 import { exportToXLSX } from "@/lib/utils/export-xlsx";
 import type { BulkCalcResult } from "@/lib/types/calculator";
 
+const TAX_LABELS: Record<string, string> = {
+  none: "Без налога",
+  usn6: "УСН 6%",
+  usn15: "УСН 15%",
+  nds22: "НДС 22% + НП 25%",
+};
+
 interface OzonBulkResultsProps {
   results: BulkCalcResult[];
   meta?: {
@@ -30,6 +37,8 @@ interface OzonBulkResultsProps {
     pickupPointType: string;
     acceptanceType: string;
     deliveryToPickupPoint: number;
+    otherExpenses: number;
+    taxRegime: string;
   };
 }
 
@@ -110,53 +119,86 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
     return sortDir === "asc" ? " ↑" : " ↓";
   };
 
+  const hasTax = meta?.taxRegime && meta.taxRegime !== "none";
+  const taxLabel = meta?.taxRegime ? TAX_LABELS[meta.taxRegime] || meta.taxRegime : "";
+  const hasOtherExpenses = (meta?.otherExpenses || 0) > 0;
+
   // Экспорт в XLSX
   const handleExport = () => {
-    const exportData = sortedResults.map((r) => ({
-      "Артикул": r.article,
-      "Наименование": r.name,
-      "Категория": r.category,
-      "Себестоимость, ₽": r.cost,
-      "Объём, л": r.volumeLiters.toFixed(3),
-      "Маржинальность, %": r.targetMargin,
-      // FBO
-      "FBO Цена, ₽": r.fbo.recommendedPrice.toFixed(2),
-      "FBO Комиссия, %": r.fbo.commissionPct,
-      "FBO Комиссия, ₽": r.fbo.commissionAmount.toFixed(2),
-      "FBO Логистика, ₽": r.fbo.shippingCost.toFixed(2),
-      "FBO Последняя миля, ₽": r.fbo.deliveryToPickup.toFixed(2),
-      "FBO Эквайринг, ₽": r.fbo.acquiringFee.toFixed(2),
-      "FBO Итого сборы, ₽": r.fbo.totalFees.toFixed(2),
-      "FBO К начислению, ₽": (r.fbo.recommendedPrice - r.fbo.totalFees).toFixed(2),
-      "FBO Прибыль, ₽": r.fbo.profit.toFixed(2),
-      "FBO Маржинальность, %": r.fbo.marginPct,
-      "FBO Наценка, %": r.fbo.markupPct,
-      // FBS
-      "FBS Цена, ₽": r.fbs.recommendedPrice.toFixed(2),
-      "FBS Комиссия, %": r.fbs.commissionPct,
-      "FBS Комиссия, ₽": r.fbs.commissionAmount.toFixed(2),
-      "FBS Логистика, ₽": r.fbs.shippingCost.toFixed(2),
-      "FBS Отправление, ₽": r.fbs.dispatchFee.toFixed(2),
-      "FBS Доставка до ПВЗ, ₽": r.fbs.deliveryToPickup.toFixed(2),
-      "FBS Эквайринг, ₽": r.fbs.acquiringFee.toFixed(2),
-      "FBS Итого сборы, ₽": r.fbs.totalFees.toFixed(2),
-      "FBS К начислению, ₽": (r.fbs.recommendedPrice - r.fbs.totalFees).toFixed(2),
-      "FBS Прибыль, ₽": r.fbs.profit.toFixed(2),
-      "FBS Маржинальность, %": r.fbs.marginPct,
-      "FBS Наценка, %": r.fbs.markupPct,
-      // RFBS
-      "RFBS Цена, ₽": r.rfbs.recommendedPrice.toFixed(2),
-      "RFBS Комиссия, %": r.rfbs.commissionPct,
-      "RFBS Комиссия, ₽": r.rfbs.commissionAmount.toFixed(2),
-      "RFBS Эквайринг, ₽": r.rfbs.acquiringFee.toFixed(2),
-      "RFBS Итого сборы, ₽": r.rfbs.totalFees.toFixed(2),
-      "RFBS К начислению, ₽": (r.rfbs.recommendedPrice - r.rfbs.totalFees).toFixed(2),
-      "RFBS Прибыль, ₽": r.rfbs.profit.toFixed(2),
-      "RFBS Маржинальность, %": r.rfbs.marginPct,
-      "RFBS Наценка, %": r.rfbs.markupPct,
-      // Ошибки
-      "Ошибка": r.error || "",
-    }));
+    const exportData = sortedResults.map((r) => {
+      const row: Record<string, string | number> = {
+        "Артикул": r.article,
+        "Наименование": r.name,
+        "Категория": r.category,
+        "Себестоимость, ₽": r.cost,
+      };
+      if (hasOtherExpenses) {
+        row["Прочие затраты, ₽"] = r.otherExpenses;
+        row["Общая себестоимость, ₽"] = (r.cost + r.otherExpenses).toFixed(2);
+      }
+      Object.assign(row, {
+        "Объём, л": r.volumeLiters.toFixed(3),
+        "Маржинальность, %": r.targetMargin,
+        // FBO
+        "FBO Цена, ₽": r.fbo.recommendedPrice.toFixed(2),
+        "FBO Комиссия, %": r.fbo.commissionPct,
+        "FBO Комиссия, ₽": r.fbo.commissionAmount.toFixed(2),
+        "FBO Логистика, ₽": r.fbo.shippingCost.toFixed(2),
+        "FBO Последняя миля, ₽": r.fbo.deliveryToPickup.toFixed(2),
+        "FBO Эквайринг, ₽": r.fbo.acquiringFee.toFixed(2),
+        "FBO Итого сборы, ₽": r.fbo.totalFees.toFixed(2),
+        "FBO К начислению, ₽": (r.fbo.recommendedPrice - r.fbo.totalFees).toFixed(2),
+        "FBO Прибыль (до налога), ₽": r.fbo.profit.toFixed(2),
+      });
+      if (hasTax) {
+        row[`FBO Налог (${taxLabel}), ₽`] = r.fbo.taxAmount.toFixed(2);
+        row["FBO Чистая прибыль, ₽"] = r.fbo.netProfit.toFixed(2);
+        row["FBO Чистая маржа, %"] = r.fbo.netMarginPct;
+      }
+      Object.assign(row, {
+        "FBO Маржинальность, %": r.fbo.marginPct,
+        "FBO Наценка, %": r.fbo.markupPct,
+        // FBS
+        "FBS Цена, ₽": r.fbs.recommendedPrice.toFixed(2),
+        "FBS Комиссия, %": r.fbs.commissionPct,
+        "FBS Комиссия, ₽": r.fbs.commissionAmount.toFixed(2),
+        "FBS Логистика, ₽": r.fbs.shippingCost.toFixed(2),
+        "FBS Отправление, ₽": r.fbs.dispatchFee.toFixed(2),
+        "FBS Доставка до ПВЗ, ₽": r.fbs.deliveryToPickup.toFixed(2),
+        "FBS Эквайринг, ₽": r.fbs.acquiringFee.toFixed(2),
+        "FBS Итого сборы, ₽": r.fbs.totalFees.toFixed(2),
+        "FBS К начислению, ₽": (r.fbs.recommendedPrice - r.fbs.totalFees).toFixed(2),
+        "FBS Прибыль (до налога), ₽": r.fbs.profit.toFixed(2),
+      });
+      if (hasTax) {
+        row[`FBS Налог (${taxLabel}), ₽`] = r.fbs.taxAmount.toFixed(2);
+        row["FBS Чистая прибыль, ₽"] = r.fbs.netProfit.toFixed(2);
+        row["FBS Чистая маржа, %"] = r.fbs.netMarginPct;
+      }
+      Object.assign(row, {
+        "FBS Маржинальность, %": r.fbs.marginPct,
+        "FBS Наценка, %": r.fbs.markupPct,
+        // RFBS
+        "RFBS Цена, ₽": r.rfbs.recommendedPrice.toFixed(2),
+        "RFBS Комиссия, %": r.rfbs.commissionPct,
+        "RFBS Комиссия, ₽": r.rfbs.commissionAmount.toFixed(2),
+        "RFBS Эквайринг, ₽": r.rfbs.acquiringFee.toFixed(2),
+        "RFBS Итого сборы, ₽": r.rfbs.totalFees.toFixed(2),
+        "RFBS К начислению, ₽": (r.rfbs.recommendedPrice - r.rfbs.totalFees).toFixed(2),
+        "RFBS Прибыль (до налога), ₽": r.rfbs.profit.toFixed(2),
+      });
+      if (hasTax) {
+        row[`RFBS Налог (${taxLabel}), ₽`] = r.rfbs.taxAmount.toFixed(2);
+        row["RFBS Чистая прибыль, ₽"] = r.rfbs.netProfit.toFixed(2);
+        row["RFBS Чистая маржа, %"] = r.rfbs.netMarginPct;
+      }
+      Object.assign(row, {
+        "RFBS Маржинальность, %": r.rfbs.marginPct,
+        "RFBS Наценка, %": r.rfbs.markupPct,
+        "Ошибка": r.error || "",
+      });
+      return row;
+    });
 
     const date = new Date().toISOString().split("T")[0];
     exportToXLSX(exportData, `Массовый_расчёт_${date}.xlsx`, "Расчёт");
@@ -180,6 +222,12 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                   <Badge variant="default" className="bg-green-600">Рассчитано: {meta.calculatedProducts}</Badge>
                   {meta.errorProducts > 0 && (
                     <Badge variant="destructive">Ошибки: {meta.errorProducts}</Badge>
+                  )}
+                  {hasTax && (
+                    <Badge variant="secondary">{taxLabel}</Badge>
+                  )}
+                  {hasOtherExpenses && (
+                    <Badge variant="secondary">Прочие: {meta.otherExpenses} ₽/шт</Badge>
                   )}
                 </span>
               )}
@@ -235,13 +283,13 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                 <th colSpan={6} className="py-2 px-2 text-left font-semibold text-muted-foreground border-r">
                   Товар
                 </th>
-                <th colSpan={5} className="py-2 px-2 text-center font-semibold text-blue-600 border-r">
+                <th colSpan={hasTax ? 7 : 5} className="py-2 px-2 text-center font-semibold text-blue-600 border-r">
                   FBO
                 </th>
-                <th colSpan={6} className="py-2 px-2 text-center font-semibold text-green-600 border-r">
+                <th colSpan={hasTax ? 8 : 6} className="py-2 px-2 text-center font-semibold text-green-600 border-r">
                   FBS
                 </th>
-                <th colSpan={4} className="py-2 px-2 text-center font-semibold text-orange-600">
+                <th colSpan={hasTax ? 6 : 4} className="py-2 px-2 text-center font-semibold text-orange-600">
                   RFBS
                 </th>
               </tr>
@@ -271,8 +319,14 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                 </th>
                 <th className="py-2 px-2 text-right whitespace-nowrap text-blue-500">Сборы</th>
                 <th className="py-2 px-2 text-right cursor-pointer hover:bg-muted/40 whitespace-nowrap text-blue-600" onClick={() => handleSort("fboProfit")}>
-                  Прибыль{sortIndicator("fboProfit")}
+                  {hasTax ? "Приб." : "Прибыль"}{sortIndicator("fboProfit")}
                 </th>
+                {hasTax && (
+                  <>
+                    <th className="py-2 px-2 text-right whitespace-nowrap text-blue-500">Налог</th>
+                    <th className="py-2 px-2 text-right whitespace-nowrap text-blue-600 font-bold">Чист.</th>
+                  </>
+                )}
                 <th className="py-2 px-2 text-right whitespace-nowrap text-blue-500">Марж%</th>
                 <th className="py-2 px-2 text-right whitespace-nowrap text-blue-500 border-r">Нац%</th>
                 {/* FBS */}
@@ -282,19 +336,33 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                 <th className="py-2 px-2 text-right whitespace-nowrap text-green-500">Сборы</th>
                 <th className="py-2 px-2 text-right whitespace-nowrap text-green-500">Отпр.</th>
                 <th className="py-2 px-2 text-right cursor-pointer hover:bg-muted/40 whitespace-nowrap text-green-600" onClick={() => handleSort("fbsProfit")}>
-                  Прибыль{sortIndicator("fbsProfit")}
+                  {hasTax ? "Приб." : "Прибыль"}{sortIndicator("fbsProfit")}
                 </th>
+                {hasTax && (
+                  <>
+                    <th className="py-2 px-2 text-right whitespace-nowrap text-green-500">Налог</th>
+                    <th className="py-2 px-2 text-right whitespace-nowrap text-green-600 font-bold">Чист.</th>
+                  </>
+                )}
                 <th className="py-2 px-2 text-right whitespace-nowrap text-green-500">Марж%</th>
                 <th className="py-2 px-2 text-right whitespace-nowrap text-green-500 border-r">Нац%</th>
                 {/* RFBS */}
                 <th className="py-2 px-2 text-right whitespace-nowrap text-orange-600">Цена</th>
-                <th className="py-2 px-2 text-right whitespace-nowrap text-orange-500">Прибыль</th>
+                <th className="py-2 px-2 text-right whitespace-nowrap text-orange-500">{hasTax ? "Приб." : "Прибыль"}</th>
+                {hasTax && (
+                  <>
+                    <th className="py-2 px-2 text-right whitespace-nowrap text-orange-500">Налог</th>
+                    <th className="py-2 px-2 text-right whitespace-nowrap text-orange-600 font-bold">Чист.</th>
+                  </>
+                )}
                 <th className="py-2 px-2 text-right whitespace-nowrap text-orange-500">Марж%</th>
                 <th className="py-2 px-2 text-right whitespace-nowrap text-orange-500">Нац%</th>
               </tr>
             </thead>
             <tbody>
-              {paginatedResults.map((r, idx) => (
+              {paginatedResults.map((r, idx) => {
+                const totalColSpan = hasTax ? 21 : 15;
+                return (
                 <tr
                   key={`${r.article}-${idx}`}
                   className={`border-b hover:bg-muted/20 transition-colors ${r.error ? "bg-red-50 dark:bg-red-950/10" : ""}`}
@@ -308,7 +376,7 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                   <td className="py-2 px-2 text-right font-medium border-r">{r.targetMargin}%</td>
 
                   {r.error ? (
-                    <td colSpan={15} className="py-2 px-3 text-red-600">
+                    <td colSpan={totalColSpan} className="py-2 px-3 text-red-600">
                       <span className="flex items-center gap-1">
                         <AlertCircle className="h-3 w-3" />
                         {r.error}
@@ -324,7 +392,17 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                       <td className={`py-2 px-2 text-right font-medium ${r.fbo.profit >= 0 ? "text-green-600" : "text-red-600"}`}>
                         {fmtMoney(r.fbo.profit)}
                       </td>
-                      <td className="py-2 px-2 text-right text-muted-foreground">{r.fbo.marginPct}%</td>
+                      {hasTax && (
+                        <>
+                          <td className="py-2 px-2 text-right text-red-500 text-[10px]">
+                            {fmtMoney(r.fbo.taxAmount)}
+                          </td>
+                          <td className={`py-2 px-2 text-right font-bold ${r.fbo.netProfit >= 0 ? "text-green-700" : "text-red-700"}`}>
+                            {fmtMoney(r.fbo.netProfit)}
+                          </td>
+                        </>
+                      )}
+                      <td className="py-2 px-2 text-right text-muted-foreground">{hasTax ? r.fbo.netMarginPct : r.fbo.marginPct}%</td>
                       <td className="py-2 px-2 text-right text-muted-foreground border-r">{r.fbo.markupPct}%</td>
 
                       {/* FBS */}
@@ -338,7 +416,17 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                       <td className={`py-2 px-2 text-right font-medium ${r.fbs.profit >= 0 ? "text-green-600" : "text-red-600"}`}>
                         {fmtMoney(r.fbs.profit)}
                       </td>
-                      <td className="py-2 px-2 text-right text-muted-foreground">{r.fbs.marginPct}%</td>
+                      {hasTax && (
+                        <>
+                          <td className="py-2 px-2 text-right text-red-500 text-[10px]">
+                            {fmtMoney(r.fbs.taxAmount)}
+                          </td>
+                          <td className={`py-2 px-2 text-right font-bold ${r.fbs.netProfit >= 0 ? "text-green-700" : "text-red-700"}`}>
+                            {fmtMoney(r.fbs.netProfit)}
+                          </td>
+                        </>
+                      )}
+                      <td className="py-2 px-2 text-right text-muted-foreground">{hasTax ? r.fbs.netMarginPct : r.fbs.marginPct}%</td>
                       <td className="py-2 px-2 text-right text-muted-foreground border-r">{r.fbs.markupPct}%</td>
 
                       {/* RFBS */}
@@ -346,16 +434,27 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                       <td className={`py-2 px-2 text-right font-medium ${r.rfbs.profit >= 0 ? "text-green-600" : "text-red-600"}`}>
                         {fmtMoney(r.rfbs.profit)}
                       </td>
-                      <td className="py-2 px-2 text-right text-muted-foreground">{r.rfbs.marginPct}%</td>
+                      {hasTax && (
+                        <>
+                          <td className="py-2 px-2 text-right text-red-500 text-[10px]">
+                            {fmtMoney(r.rfbs.taxAmount)}
+                          </td>
+                          <td className={`py-2 px-2 text-right font-bold ${r.rfbs.netProfit >= 0 ? "text-green-700" : "text-red-700"}`}>
+                            {fmtMoney(r.rfbs.netProfit)}
+                          </td>
+                        </>
+                      )}
+                      <td className="py-2 px-2 text-right text-muted-foreground">{hasTax ? r.rfbs.netMarginPct : r.rfbs.marginPct}%</td>
                       <td className="py-2 px-2 text-right text-muted-foreground">{r.rfbs.markupPct}%</td>
                     </>
                   )}
                 </tr>
-              ))}
+                );
+              })}
 
               {paginatedResults.length === 0 && (
                 <tr>
-                  <td colSpan={21} className="py-8 text-center text-muted-foreground">
+                  <td colSpan={hasTax ? 27 : 21} className="py-8 text-center text-muted-foreground">
                     {searchQuery ? "Ничего не найдено" : "Нет данных"}
                   </td>
                 </tr>
