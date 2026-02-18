@@ -216,7 +216,7 @@ export function OzonCalculator() {
           categoryMargins: catMargins,
           pickupPointType,
           acceptanceType,
-          marginMode: ozon.marginSettings.mode || "markup",
+          marginMode: "margin",
         }),
       });
 
@@ -363,42 +363,19 @@ export function OzonCalculator() {
           {/* Настройки расчёта */}
           {ozon.parsedData && ozon.parsedData.products.length > 0 && (
             <>
-              {/* Настройки наценки/маржинальности */}
+              {/* Настройки маржинальности */}
               <Card>
                 <CardHeader>
-                  <CardTitle>Настройки наценки / маржинальности</CardTitle>
+                  <CardTitle>Настройки планируемой маржинальности</CardTitle>
                   <CardDescription>
-                    Значение из файла (если указано) имеет высший приоритет.
-                    Затем — по категории, затем — общее.
+                    Маржинальность из файла (если указана) имеет высший приоритет.
+                    Затем — по категории, затем — общая. Формула: (Цена − Себестоимость) / Цена × 100%.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
-                  {/* Переключатель режима */}
-                  <div className="space-y-2">
-                    <Label>Режим расчёта</Label>
-                    <Select
-                      value={ozon.marginSettings.mode || "markup"}
-                      onValueChange={(val) => setOzonMarginSettings({ ...ozon.marginSettings, mode: val as "markup" | "margin" })}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="markup">Наценка — (Цена − Себестоимость) / Себестоимость × 100%</SelectItem>
-                        <SelectItem value="margin">Маржинальность — (Цена − Себестоимость) / Цена × 100%</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      {(ozon.marginSettings.mode || "markup") === "markup"
-                        ? "Наценка рассчитывается от себестоимости: какой % добавить сверх себестоимости."
-                        : "Маржинальность рассчитывается от цены продажи: какую долю цены составляет прибыль."
-                      }
-                    </p>
-                  </div>
-
                   <div className="space-y-2">
                     <Label htmlFor="global-margin">
-                      {(ozon.marginSettings.mode || "markup") === "markup" ? "Общая наценка (%)" : "Общая маржинальность (%)"}
+                      Общая маржинальность (%)
                     </Label>
                     <Input
                       id="global-margin"
@@ -417,7 +394,7 @@ export function OzonCalculator() {
                   {ozon.parsedData.categories.length > 0 && (
                     <div className="space-y-4">
                       <Label>
-                        {(ozon.marginSettings.mode || "markup") === "markup" ? "Наценка" : "Маржинальность"} по категориям (опционально)
+                        Маржинальность по категориям (опционально)
                       </Label>
                       <div className="space-y-3">
                         {ozon.parsedData.categories.map((category) => {
