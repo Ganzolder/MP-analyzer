@@ -123,17 +123,19 @@ export function ProductSalesAnalytics({
         // Сравниваем по SKU или артикулу
         return orderSku === productKey || orderArticle === productKey;
       })
-      .map(order => ({
-        ...order,
-        // Преобразуем chargeDate в Date, если это строка
-        chargeDate: order.chargeDate instanceof Date 
-          ? order.chargeDate 
-          : new Date(order.chargeDate),
-        // Также преобразуем orderDate, если нужно
-        orderDate: order.orderDate 
-          ? (order.orderDate instanceof Date ? order.orderDate : new Date(order.orderDate))
-          : null,
-      }))
+      .map(order => {
+        const rawDate = order.chargeDate;
+        const chargeDate = rawDate instanceof Date 
+          ? rawDate 
+          : (rawDate ? new Date(rawDate) : new Date(0));
+        return {
+          ...order,
+          chargeDate: isNaN(chargeDate.getTime()) ? new Date(0) : chargeDate,
+          orderDate: order.orderDate 
+            ? (order.orderDate instanceof Date ? order.orderDate : new Date(order.orderDate))
+            : null,
+        };
+      })
       .sort((a, b) => a.chargeDate.getTime() - b.chargeDate.getTime());
   }, [product, orders]);
 
@@ -649,7 +651,11 @@ export function ProductSalesAnalytics({
                                         ) : (
                                           ordersInPeriod
                                             .slice()
-                                            .sort((a, b) => a.chargeDate.getTime() - b.chargeDate.getTime())
+                                            .sort((a, b) => {
+                                              const aT = a.chargeDate instanceof Date ? a.chargeDate.getTime() : new Date(a.chargeDate || 0).getTime();
+                                              const bT = b.chargeDate instanceof Date ? b.chargeDate.getTime() : new Date(b.chargeDate || 0).getTime();
+                                              return aT - bT;
+                                            })
                                             .slice(0, 200)
                                             .map((o) => {
                                               const hasRevenue = (o.grossRevenue || 0) > 0;
@@ -657,8 +663,9 @@ export function ProductSalesAnalytics({
                                               const netProfit = hasCost
                                                 ? (o.totalAmountRub || 0) - (o.totalCost || 0)
                                                 : (o.totalAmountRub || 0);
+                                              const dateKey = o.chargeDate instanceof Date ? o.chargeDate.toISOString() : (o.chargeDate ? String(o.chargeDate) : o.orderNumber || "");
                                               return (
-                                                <tr key={`${o.orderNumber}-${o.chargeDate.toISOString()}`} className="border-b last:border-0 hover:bg-muted/20">
+                                                <tr key={`${o.orderNumber}-${dateKey}`} className="border-b last:border-0 hover:bg-muted/20">
                                                   <td className="py-2 px-2 font-medium">{o.orderNumber}</td>
                                                   <td className="py-2 px-2 text-muted-foreground">{formatDate(o.chargeDate)}</td>
                                                   <td className="py-2 px-2 text-muted-foreground">{o.status}</td>
