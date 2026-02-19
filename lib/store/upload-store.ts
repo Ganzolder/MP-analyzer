@@ -19,6 +19,9 @@ interface UploadState {
   // Массив файлов отчётов Ozon (для массовой загрузки)
   mainFiles: UploadedFile[];
   
+  // Файлы отчётов о выкупленных товарах (RealizationReportCIS)
+  buyoutFiles: UploadedFile[];
+  
   // Файл себестоимости (для будущего)
   costFile: UploadedFile | null;
   costFileId: string | null;
@@ -40,6 +43,9 @@ interface UploadState {
   addMainFile: (file: File) => void;
   removeMainFile: (id: string) => void;
   clearMainFiles: () => void;
+  addBuyoutFile: (file: File) => void;
+  removeBuyoutFile: (id: string) => void;
+  clearBuyoutFiles: () => void;
   setCostFile: (file: File | null) => void;
   setCostFileId: (id: string | null) => void;
   setCustomPrompt: (prompt: string) => void;
@@ -58,6 +64,7 @@ export const useUploadStore = create<UploadState>()(
       mainFile: null,
       mainFileId: null,
       mainFiles: [],
+      buyoutFiles: [],
       costFile: null,
       costFileId: null,
       customPrompt: "",
@@ -124,6 +131,29 @@ export const useUploadStore = create<UploadState>()(
         set({ mainFiles: [], mainFile: null, mainFileId: null, uploadError: null });
       },
       
+      addBuyoutFile: (file) => {
+        const uploadedFile: UploadedFile = {
+          id: `buyout-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          file,
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          uploadProgress: 0,
+          uploadedAt: new Date(),
+        };
+        const current = get().buyoutFiles;
+        if (current.some(f => f.name === file.name)) return;
+        set({ buyoutFiles: [...current, uploadedFile], uploadError: null });
+      },
+      
+      removeBuyoutFile: (id) => {
+        set({ buyoutFiles: get().buyoutFiles.filter(f => f.id !== id) });
+      },
+      
+      clearBuyoutFiles: () => {
+        set({ buyoutFiles: [] });
+      },
+      
       setMainFileId: (id) => set({ mainFileId: id }),
       
       setCostFile: (file) => {
@@ -165,6 +195,7 @@ export const useUploadStore = create<UploadState>()(
         mainFile: null,
         mainFileId: null,
         mainFiles: [],
+        buyoutFiles: [],
         costFile: null,
         costFileId: null,
         customPrompt: "",

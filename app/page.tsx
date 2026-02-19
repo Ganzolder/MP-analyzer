@@ -43,6 +43,9 @@ export default function HomePage() {
     addMainFile,
     removeMainFile,
     clearMainFiles,
+    buyoutFiles,
+    addBuyoutFile,
+    removeBuyoutFile,
     costFile,
     setCostFile,
     clearCostFile,
@@ -333,6 +336,9 @@ export default function HomePage() {
         if (costFile) {
           formData.append("costFile", costFile.file);
         }
+        if (buyoutFiles.length > 0) {
+          buyoutFiles.forEach(f => formData.append("buyoutFiles", f.file));
+        }
         if (customPrompt) {
           formData.append("customPrompt", customPrompt);
         }
@@ -421,6 +427,9 @@ export default function HomePage() {
         // Файл себестоимости добавляем к каждому чанку
         if (costFile) {
           formData.append("costFile", costFile.file);
+        }
+        if (buyoutFiles.length > 0) {
+          buyoutFiles.forEach(f => formData.append("buyoutFiles", f.file));
         }
         if (customPrompt) {
           formData.append("customPrompt", customPrompt);
@@ -670,6 +679,23 @@ export default function HomePage() {
               description="или нажмите для выбора нескольких файлов отчётов (помесячных) из личного кабинета Ozon"
               error={uploadError}
               maxSize={20 * 1024 * 1024} // 20 MB
+            />
+          </div>
+          
+          {/* Файлы отчётов о выкупленных товарах */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-muted-foreground">
+              Отчёт о выкупленных товарах
+            </label>
+            <MultiFileUploader
+              onFilesSelect={(files) => {
+                files.forEach(file => addBuyoutFile(file));
+              }}
+              onFileRemove={removeBuyoutFile}
+              selectedFiles={buyoutFiles.map(f => ({ id: f.id, name: f.name, size: f.size }))}
+              title="Отчёты о выкупленных товарах"
+              description="XLSX-файлы RealizationReportCIS из личного кабинета Ozon. Необязательно — дополняет выручку по выкупам."
+              maxSize={20 * 1024 * 1024}
             />
           </div>
           

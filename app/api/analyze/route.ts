@@ -4,6 +4,7 @@ import * as path from "path";
 import { generateId } from "@/lib/utils";
 import { analyzeReport } from "@/lib/analysis";
 import { parseCostFile } from "@/lib/analysis/cost-parser";
+import { parseBuyoutReport } from "@/lib/analysis/parsers/buyout-report-parser";
 import { getChargeCategory } from "@/lib/analysis/constants";
 import { logger } from "@/lib/utils/logger";
 import { SummaryCalculator } from "@/lib/analysis/calculators/summary-calculator";
@@ -28,9 +29,10 @@ export async function POST(request: NextRequest) {
     let buffer: Buffer | undefined;
     let fileName: string;
     let analysisId: string;
-    let costData: Map<string, number> | undefined; // Объявляем в начале функции
-    let filesToProcess: File[] = []; // Файлы для обработки
-    let totalSize = 0; // Общий размер файлов
+    let costData: Map<string, number> | undefined;
+    let buyoutData: Map<string, number> | undefined; // Выручка из отчётов о выкупленных товарах
+    let filesToProcess: File[] = [];
+    let totalSize = 0;
     
     if (isDemo) {
       // Демо-режим: используем тестовый файл
@@ -139,6 +141,26 @@ export async function POST(request: NextRequest) {
       } else {
         console.log("⚠️ [API] Файл себестоимости НЕ загружен");
         costData = undefined;
+      }
+      
+      // Парсим файлы отчётов о выкупленных товарах
+      const buyoutFilesList = formData.getAll("buyoutFiles") as File[];
+      if (buyoutFilesList.length > 0) {
+        console.log(`📦 [API] Получено ${buyoutFilesList.length} файл(ов) выкупленных товаров`);
+        buyoutData = new Map<string, number>();
+        for (const bf of buyoutFilesList) {
+          try {
+            const result = await parseBuyoutReport(bf, bf.name);
+            for (const [shipment, amount] of result.byShipment) {
+              const existing = buyoutData.get(shipment) || 0;
+              buyoutData.set(shipment, existing + amount);
+            }
+            console.log(`   ✅ ${bf.name}: ${result.rowsParsed} строк, ${result.byShipment.size} отправлений`);
+          } catch (err: any) {
+            console.error(`   ❌ Ошибка файла ${bf.name}:`, err.message);
+          }
+        }
+        console.log(`📦 [API] Итого выкупов: ${buyoutData.size} уникальных отправлений`);
       }
     }
     
@@ -639,6 +661,98 @@ export async function POST(request: NextRequest) {
       console.log(`   Итого заказов: ${analysisResult.summary.totalOrders}`);
       console.log(`   Итого dailyMetrics: ${analysisResult.dailyMetrics?.length || 0} записей`);
       console.log("=".repeat(60));
+    }
+    
+    // ─── ОБОГАЩЕНИЕ ВЫРУЧКОЙ ИЗ ОТЧЁТОВ О ВЫКУПЛЕННЫХ ТОВАРАХ ───
+    if (buyoutData && buyoutData.size > 0 && analysisResult.orders) {
+      let enrichedCount = 0;
+      let addedRevenue = 0;
+      
+      for (const order of analysisResult.orders) {
+        const orderNum = order.orderNumber;
+        if (!orderNum) continue;
+        
+        const buyoutAmount = buyoutData.get(orderNum);
+        if (buyoutAmount !== undefined && buyoutAmount > 0) {
+          // Добавляем выручку из выкупа к заказу
+          order.grossRevenue = (order.grossRevenue || 0) + buyoutAmount;
+          order.revenueAmount = (order.revenueAmount || 0) + buyoutAmount;
+          order.totalAmountRub = (order.totalAmountRub || 0) + buyoutAmount;
+          
+          // Отмечаем, что добавлен тип начисления «Выкуп»
+          if (!order.chargeTypes) order.chargeTypes = [];
+          if (!order.chargeTypes.includes("Выкуп (отчёт о выкупленных товарах)")) {
+            order.chargeTypes.push("Выкуп (отчёт о выкупленных товарах)");
+          }
+          
+          // Пересчитываем статус — теперь заказ имеет выручку
+          if (order.grossRevenue > 0 && order.returnAmount === 0) {
+            order.status = "completed";
+          } else if (order.grossRevenue > 0 && order.returnAmount < 0) {
+            order.status = "partial_return";
+          }
+          
+          enrichedCount++;
+          addedRevenue += buyoutAmount;
+        }
+      }
+      
+      if (enrichedCount > 0) {
+        console.log(`📦 [API] Обогащено выручкой из выкупов: ${enrichedCount} заказов, +${addedRevenue.toFixed(2)} ₽`);
+        
+        // Пересчитываем summary с обновлёнными заказами
+        const summaryCalculator = new SummaryCalculator();
+        const recalculated = summaryCalculator.calculateSummary(
+          analysisResult.orders,
+          analysisResult.nonOrderCharges || [],
+          analysisResult.subscriptions || [],
+          analysisResult.productMetrics || []
+        );
+        analysisResult.summary = { ...analysisResult.summary, ...recalculated };
+        
+        // Пересчитываем productMetrics из обогащённых заказов
+        const productMap = new Map<string, any>();
+        for (const order of analysisResult.orders) {
+          if (!order.article) continue;
+          const existing = productMap.get(order.article);
+          if (existing) {
+            existing.totalRevenue += order.grossRevenue || 0;
+            existing.netAmount = (existing.netAmount || 0) + (order.totalAmountRub || 0);
+            existing.totalSold += order.quantity || 0;
+            existing.ordersCount += 1;
+            existing.totalCommission += order.commissionAmount || 0;
+            existing.totalLogistics += order.logisticsAmount || 0;
+            existing.totalReturnsAmount += order.returnAmount || 0;
+            if (existing.totalRevenue > 0) {
+              existing.marginPercent = (existing.netAmount / existing.totalRevenue) * 100;
+            }
+          } else {
+            productMap.set(order.article, {
+              article: order.article,
+              sku: order.sku || "",
+              productName: order.productName || "",
+              totalRevenue: order.grossRevenue || 0,
+              netAmount: order.totalAmountRub || 0,
+              totalSold: order.quantity || 0,
+              totalReturned: 0,
+              ordersCount: 1,
+              marginPercent: order.grossRevenue > 0 ? ((order.totalAmountRub || 0) / order.grossRevenue) * 100 : 0,
+              totalCommission: order.commissionAmount || 0,
+              totalLogistics: order.logisticsAmount || 0,
+              totalReturnsAmount: order.returnAmount || 0,
+              costPerUnit: order.costPerUnit,
+              totalCost: order.totalCost,
+              netProfit: order.totalCost ? (order.totalAmountRub || 0) - order.totalCost : undefined,
+            });
+          }
+        }
+        // Обновляем productMetrics если пересчитали
+        if (productMap.size > 0) {
+          analysisResult.productMetrics = Array.from(productMap.values());
+          analysisResult.topProducts = analysisResult.productMetrics
+            .sort((a: any, b: any) => ((b.netProfit ?? b.netAmount) || 0) - ((a.netProfit ?? a.netAmount) || 0));
+        }
+      }
     }
     
     // Логирование итогов
