@@ -94,10 +94,10 @@ export async function parseBuyoutReport(
 
   // Если заголовки не найдены по тексту — используем фиксированные позиции по формату документа
   if (headerRowIdx === -1) {
-    // Столбец E (index 4) = Номер отправления, столбец K (index 10) = Итого к начислению
+    // Столбец F (index 5) = Номер отправления, столбец L (index 11) = Итого к начислению
     headerRowIdx = findDataStartRow(rawData);
-    shipmentColIdx = 4;
-    accrualColIdx = 10;
+    shipmentColIdx = 5;
+    accrualColIdx = 11;
   }
 
   const entries: BuyoutEntry[] = [];
