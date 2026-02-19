@@ -317,36 +317,39 @@ export function AllProductsTable({ products, orders = [], analysisId, summary, o
 
     setIsRecalculating(true);
     try {
-      // Сохраняем исключённые товары в store
       selectedSkus.forEach(sku => addExcludedSku(sku));
-      
+      const fullExcluded = useExcludedProductsStore.getState().excludedSkus;
+
       if (onRecalculate) {
-        await onRecalculate(Array.from(selectedSkus));
+        await onRecalculate(Array.from(fullExcluded));
         toast({
           title: "Пересчёт выполнен",
           description: `Исключено товаров: ${selectedSkus.size}`,
         });
         setSelectedSkus(new Set());
-      } else {
-        // Если onRecalculate не передан, вызываем API напрямую
+      } else if (analysisId) {
         const response = await fetch(`/api/analysis/${analysisId}/recalculate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ excludedSkus: Array.from(selectedSkus) }),
+          body: JSON.stringify({ excludedSkus: Array.from(fullExcluded) }),
         });
 
         if (!response.ok) {
           throw new Error("Ошибка при пересчёте");
         }
 
-        const recalculated = await response.json();
         toast({
           title: "Пересчёт выполнен",
           description: `Исключено товаров: ${selectedSkus.size}`,
         });
         setSelectedSkus(new Set());
-        // Обновляем данные через callback или window.location.reload()
         window.location.reload();
+      } else {
+        toast({
+          title: "Пересчёт недоступен",
+          description: "Не указан идентификатор анализа",
+          variant: "destructive",
+        });
       }
     } catch (error: any) {
       toast({

@@ -108,25 +108,25 @@ export function ProductsWithoutCostTable({ products, title = "Товары бе�
       return;
     }
 
+    if (!onRecalculate) {
+      toast({
+        title: "Ошибка",
+        description: "Функция пересчёта недоступна",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsRecalculating(true);
     try {
-      // Сохраняем исключённые товары в store
       selectedSkus.forEach(sku => addExcludedSku(sku));
-      
-      if (onRecalculate) {
-        await onRecalculate(Array.from(selectedSkus));
-        toast({
-          title: "Товары исключены",
-          description: `Исключено товаров: ${selectedSkus.size}`,
-        });
-        setSelectedSkus(new Set());
-      } else {
-        toast({
-          title: "Товары исключены",
-          description: `Исключено товаров: ${selectedSkus.size}. Пересчитайте анализ для применения изменений.`,
-        });
-        setSelectedSkus(new Set());
-      }
+      const fullExcluded = useExcludedProductsStore.getState().excludedSkus;
+      await onRecalculate(Array.from(fullExcluded));
+      toast({
+        title: "Товары исключены",
+        description: `Исключено товаров: ${selectedSkus.size}`,
+      });
+      setSelectedSkus(new Set());
     } catch (error: any) {
       toast({
         title: "Ошибка",
