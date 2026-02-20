@@ -58,8 +58,16 @@ export function parseDate(value: any): Date {
 /**
  * Форматирование даты в ISO формат (YYYY-MM-DD)
  */
-export function formatDate(date: Date): string {
-  return date.toISOString().split("T")[0];
+export function formatDate(date: Date | string | null | undefined): string {
+  if (!date) return "1970-01-01";
+  if (date instanceof Date) {
+    if (isNaN(date.getTime())) return "1970-01-01";
+    return date.toISOString().split("T")[0];
+  }
+  // строка — пробуем распарсить
+  const parsed = new Date(date);
+  if (isNaN(parsed.getTime())) return String(date).split("T")[0].substring(0, 10) || "1970-01-01";
+  return parsed.toISOString().split("T")[0];
 }
 
 /**
