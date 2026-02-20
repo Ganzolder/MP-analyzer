@@ -123,20 +123,22 @@ export function OzonCalculator() {
       try {
         const result: ParsedFileResult = await parseOzonFile(file);
 
-        if (result.errors.length > 0) {
+        if (result.products.length === 0 && result.errors.length > 0) {
+          toast({
+            title: "Ошибка при загрузке файла",
+            description: result.errors.slice(0, 3).join(" | "),
+            variant: "destructive",
+          });
+        } else if (result.errors.length > 0) {
           toast({
             title: "Ошибки при парсинге",
-            description: `Найдено ${result.errors.length} ошибок. Проверьте файл.`,
+            description: `Найдено ${result.errors.length} ошибок в строках. Первая: ${result.errors[0]}`,
             variant: "destructive",
           });
         }
 
         if (result.products.length === 0) {
-          toast({
-            title: "Файл пуст",
-            description: "Не удалось найти товары в файле",
-            variant: "destructive",
-          });
+          // ошибка уже показана выше
         } else {
           toast({
             title: "Файл загружен",

@@ -188,10 +188,14 @@ export async function parseOzonFile(file: File): Promise<ParsedFileResult> {
     }
 
     if (missingColumns.length > 0) {
+      const foundHeaders = headers.filter(h => h).join(", ") || "(заголовки не найдены)";
       return {
         products: [],
         categories: [],
-        errors: [`Отсутствуют обязательные колонки: ${missingColumns.join(", ")}`],
+        errors: [
+          `Отсутствуют обязательные колонки: ${missingColumns.join(", ")}`,
+          `Найденные заголовки в файле: ${foundHeaders}`,
+        ],
       };
     }
 
