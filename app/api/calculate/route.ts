@@ -369,7 +369,9 @@ export async function POST(request: NextRequest) {
       // none: netProfit = price*(1-pctRate) - fixedFees - totalCost  => price = (totalCost+fixedFees)/(1-pctRate-m)
       // usn6: netProfit = 0.94*(price*(1-pctRate)-fixedFees)-totalCost  => price = (0.94*fixedFees+totalCost)/(0.94*(1-pctRate)-m)
       // usn15: netProfit = 0.85*(price*(1-pctRate)-fixedFees-totalCost)  => price = 0.85*(fixedFees+totalCost)/(0.85*(1-pctRate)-m)
-      // nds22: netProfit = (price*(1-pctRate)-fixedFees-totalCost)*75/122  => price = (fixedFees+totalCost)*75/122 / ((1-pctRate)*75/122-m)
+      // nds22: при profit>0 netProfit = (price*(1-pctRate)-fixedFees-totalCost)*75/122 (НДС/НП от полного totalCost).
+      // При убытке до налогов обратная формула может расходиться с пошаговым max(VAT,0)+НП.
+      // price = (fixedFees+totalCost)*75/122 / ((1-pctRate)*75/122-m)
       const priceFormula = (
         pctRate: number,
         fixedFees: number,

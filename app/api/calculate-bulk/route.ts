@@ -275,6 +275,8 @@ export async function POST(request: NextRequest) {
       if (regime === "usn15") {
         return { numerator: 0.85 * (fixedFees + totalCost), denominator: 0.85 * oneMinusPct - m };
       }
+      // nds22: при profit>0 netProfit = profit*75/122 (НДС и НП от полного totalCost в 22/122-модели).
+      // При отрицательной прибыли до налогов линейная формула не совпадает с пошаговым max(VAT,0)+НП.
       if (regime === "nds22") {
         const k = 75 / 122;
         return { numerator: (fixedFees + totalCost) * k, denominator: k * oneMinusPct - m };
@@ -363,10 +365,10 @@ export async function POST(request: NextRequest) {
         return base > 0 ? Math.round(base * 15 / 100 * 100) / 100 : 0;
       }
       if (regime === "nds22") {
-        const cost = totalCost - otherExp; // себестоимость без прочих расходов
-        const vatPayable = Math.round((accrual * 22 / 122 - cost * 22 / 122) * 100) / 100;
+        // НДС и база НП: полная сумма затрат (себестоимость + прочие) в методе 22/122 / 100/122.
+        const vatPayable = Math.round((accrual * 22 / 122 - totalCost * 22 / 122) * 100) / 100;
         const incomeNoVat = accrual * 100 / 122;
-        const expensesNoVat = cost * 100 / 122 + otherExp;
+        const expensesNoVat = totalCost * 100 / 122;
         const profitTaxBase = incomeNoVat - expensesNoVat;
         const profitTax = profitTaxBase > 0 ? Math.round(profitTaxBase * 25 / 100 * 100) / 100 : 0;
         return (vatPayable > 0 ? vatPayable : 0) + profitTax;

@@ -465,6 +465,7 @@ export function OzonSingleProductCalculator() {
     const accrual = calcResult.price - fulfillment.totalFees;
     const cost = calcResult.productCost || 0;
     const otherExp = calcResult.otherExpenses || 0;
+    const totalCost = calcResult.totalCost ?? cost + otherExp;
     const price = calcResult.price;
 
     const mkResult = (totalTax: number, extra: Partial<TaxCalc> = {}): TaxCalc => {
@@ -531,6 +532,7 @@ export function OzonSingleProductCalculator() {
         numerator = 0.85 * (fixedFees + tc);
         denominator = 0.85 * oneMinusPct - m;
       } else if (regime === "nds22") {
+        // Согласовано с calculateAllTaxes nds22 (k=75/122 при profit>0)
         const k = 75 / 122;
         numerator = (fixedFees + tc) * k;
         denominator = k * oneMinusPct - m;
@@ -1159,7 +1161,7 @@ export function OzonSingleProductCalculator() {
                       <strong>Без налога (0%)</strong> — расчёт без учёта налогов.<br />
                       <strong>УСН Доходы (6%)</strong> — 6% от начислений Озон (Цена − все сборы).<br />
                       <strong>УСН Доходы−Расходы (15%)</strong> — 15% от (начисления − себестоимость − прочие расходы).<br />
-                      <strong>НДС 22%</strong> — НДС к уплате + налог на прибыль 25%.
+                      <strong>НДС 22% + НП 25%</strong> — метод 22/122 и 100/122 от начислений и от полной суммы затрат (себестоимость + прочие расходы), затем налог на прибыль 25% от базы без НДС.
                     </p>
                   </TooltipContent>
                 </Tooltip>
