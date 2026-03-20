@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/db/prisma";
 
+export const dynamic = "force-dynamic";
+
 /**
  * GET /api/acquiring-settings
  * Получение настроек эквайринга

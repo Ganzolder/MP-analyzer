@@ -486,10 +486,10 @@ export function OzonSingleProductCalculator() {
     const usn15Tax = usn15Base > 0 ? Math.round(usn15Base * 15 / 100 * 100) / 100 : 0;
     const usn15 = mkResult(usn15Tax, { usnTax: usn15Tax });
 
-    // НДС 22% + Налог на прибыль 25%
-    const vatPayable = Math.round((accrual * 22 / 122 - cost * 22 / 122) * 100) / 100;
+    // НДС 22% + Налог на прибыль 25% (как bulk API: НДС и база НП от полного totalCost)
+    const vatPayable = Math.round((accrual * 22 / 122 - totalCost * 22 / 122) * 100) / 100;
     const incomeNoVat = accrual * 100 / 122;
-    const expensesNoVat = cost * 100 / 122 + otherExp;
+    const expensesNoVat = totalCost * 100 / 122;
     const profitTaxBase = incomeNoVat - expensesNoVat;
     const profitTax = profitTaxBase > 0 ? Math.round(profitTaxBase * 25 / 100 * 100) / 100 : 0;
     const nds22Total = (vatPayable > 0 ? vatPayable : 0) + profitTax;

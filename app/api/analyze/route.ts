@@ -11,6 +11,8 @@ import { SummaryCalculator } from "@/lib/analysis/calculators/summary-calculator
 import type { AggregatedOrder, OrderStatus } from "@/lib/analysis/types";
 import prisma from "@/lib/db/prisma";
 
+export const dynamic = "force-dynamic";
+
 // Путь к демо-файлу
 const DEMO_FILE_PATH = path.join(process.cwd(), "test", "Отчет по начислениям_01.10.2025-31.10.2025 (2).xlsx");
 
