@@ -469,6 +469,45 @@ export function OzonCalculator() {
                       </div>
                     </div>
                   )}
+
+                  <div className="space-y-4 pt-4 border-t">
+                    <p className="text-sm text-muted-foreground">
+                      Рамки чистой маржи для цены по цели в ₽ (сумму цели задаёте в разделе «Дополнительные затраты и налоги»):
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="bulk-profit-min-margin">Но не менее (чистая маржа), %</Label>
+                        <Input
+                          id="bulk-profit-min-margin"
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="100"
+                          value={bulkProfitMinMarginPct}
+                          onChange={(e) => setBulkProfitMinMarginPct(e.target.value)}
+                          placeholder="Необязательно"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="bulk-profit-max-margin">Но не более (чистая маржа), %</Label>
+                        <Input
+                          id="bulk-profit-max-margin"
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="100"
+                          value={bulkProfitMaxMarginPct}
+                          onChange={(e) => setBulkProfitMaxMarginPct(e.target.value)}
+                          placeholder="Необязательно"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Сначала считается цена под цель в ₽; если чистая маржа выходит за эти %, подставляется цена по
+                      соответствующей границе (как у общей маржинальности выше). Работает только вместе с заполненной
+                      целью в ₽.
+                    </p>
+                  </div>
                 </CardContent>
               </Card>
 
@@ -543,41 +582,10 @@ export function OzonCalculator() {
                         placeholder="Необязательно"
                       />
                       <p className="text-xs text-muted-foreground">
-                        Дополнительно к цене по марже: колонки «Цена₽+» — цена для этой чистой прибыли после налогов
+                        Дополнительно к цене по марже: колонки «Цена₽+» — цена для этой чистой прибыли после налогов.
+                        Рамки по % чистой маржи — в разделе «Настройки планируемой маржинальности».
                       </p>
                     </div>
-                    <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="bulk-profit-min-margin">Но не менее (чистая маржа), %</Label>
-                        <Input
-                          id="bulk-profit-min-margin"
-                          type="number"
-                          step="0.1"
-                          min="0"
-                          max="100"
-                          value={bulkProfitMinMarginPct}
-                          onChange={(e) => setBulkProfitMinMarginPct(e.target.value)}
-                          placeholder="Необязательно"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="bulk-profit-max-margin">Но не более (чистая маржа), %</Label>
-                        <Input
-                          id="bulk-profit-max-margin"
-                          type="number"
-                          step="0.1"
-                          min="0"
-                          max="100"
-                          value={bulkProfitMaxMarginPct}
-                          onChange={(e) => setBulkProfitMaxMarginPct(e.target.value)}
-                          placeholder="Необязательно"
-                        />
-                      </div>
-                    </div>
-                    <p className="text-xs text-muted-foreground md:col-span-3">
-                      Сначала считается цена под цель в ₽; если при этом чистая маржа выходит за указанные %, подставляется
-                      цена по соответствующей границе (как у глобальной маржи). Работает только вместе с целью в ₽.
-                    </p>
                   </div>
                 </CardContent>
               </Card>
