@@ -39,6 +39,7 @@ interface OzonBulkResultsProps {
     deliveryToPickupPoint: number;
     otherExpenses: number;
     taxRegime: string;
+    targetNetProfitRub?: number;
   };
 }
 
@@ -122,6 +123,10 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
   const hasTax = meta?.taxRegime && meta.taxRegime !== "none";
   const taxLabel = meta?.taxRegime ? TAX_LABELS[meta.taxRegime] || meta.taxRegime : "";
   const hasOtherExpenses = (meta?.otherExpenses || 0) > 0;
+  const hasProfitTarget =
+    meta?.targetNetProfitRub !== undefined &&
+    meta?.targetNetProfitRub !== null &&
+    !isNaN(Number(meta.targetNetProfitRub));
 
   // Экспорт в XLSX
   const handleExport = () => {
@@ -197,6 +202,15 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
         "RFBS Наценка, %": r.rfbs.markupPct,
         "Ошибка": r.error || "",
       });
+      if (hasProfitTarget && !r.error) {
+        row["Цель чистой прибыли, ₽"] = meta!.targetNetProfitRub!;
+        row["FBO Цена (цель ₽), ₽"] =
+          r.fbo.recommendedPriceByNetProfit != null ? r.fbo.recommendedPriceByNetProfit.toFixed(2) : "";
+        row["FBS Цена (цель ₽), ₽"] =
+          r.fbs.recommendedPriceByNetProfit != null ? r.fbs.recommendedPriceByNetProfit.toFixed(2) : "";
+        row["RFBS Цена (цель ₽), ₽"] =
+          r.rfbs.recommendedPriceByNetProfit != null ? r.rfbs.recommendedPriceByNetProfit.toFixed(2) : "";
+      }
       return row;
     });
 
@@ -228,6 +242,9 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                   )}
                   {hasOtherExpenses && (
                     <Badge variant="secondary">Прочие: {meta.otherExpenses} ₽/шт</Badge>
+                  )}
+                  {hasProfitTarget && (
+                    <Badge variant="secondary">Цель чистой прибыли: {meta.targetNetProfitRub} ₽/шт</Badge>
                   )}
                 </span>
               )}
@@ -283,13 +300,13 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                 <th colSpan={6} className="py-2 px-2 text-left font-semibold text-muted-foreground border-r">
                   Товар
                 </th>
-                <th colSpan={hasTax ? 7 : 5} className="py-2 px-2 text-center font-semibold text-blue-600 border-r">
+                <th colSpan={(hasTax ? 7 : 5) + (hasProfitTarget ? 1 : 0)} className="py-2 px-2 text-center font-semibold text-blue-600 border-r">
                   FBO
                 </th>
-                <th colSpan={hasTax ? 8 : 6} className="py-2 px-2 text-center font-semibold text-green-600 border-r">
+                <th colSpan={(hasTax ? 8 : 6) + (hasProfitTarget ? 1 : 0)} className="py-2 px-2 text-center font-semibold text-green-600 border-r">
                   FBS
                 </th>
-                <th colSpan={hasTax ? 6 : 4} className="py-2 px-2 text-center font-semibold text-orange-600">
+                <th colSpan={(hasTax ? 6 : 4) + (hasProfitTarget ? 1 : 0)} className="py-2 px-2 text-center font-semibold text-orange-600">
                   RFBS
                 </th>
               </tr>
@@ -329,6 +346,11 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                 )}
                 <th className="py-2 px-2 text-right whitespace-nowrap text-blue-500">Марж%</th>
                 <th className="py-2 px-2 text-right whitespace-nowrap text-blue-500 border-r">Нац%</th>
+                {hasProfitTarget && (
+                  <th className="py-2 px-2 text-right whitespace-nowrap text-blue-600 border-r" title="Цена для целевой чистой прибыли, ₽">
+                    Цена₽+
+                  </th>
+                )}
                 {/* FBS */}
                 <th className="py-2 px-2 text-right cursor-pointer hover:bg-muted/40 whitespace-nowrap text-green-600" onClick={() => handleSort("fbsPrice")}>
                   Цена{sortIndicator("fbsPrice")}
@@ -346,6 +368,11 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                 )}
                 <th className="py-2 px-2 text-right whitespace-nowrap text-green-500">Марж%</th>
                 <th className="py-2 px-2 text-right whitespace-nowrap text-green-500 border-r">Нац%</th>
+                {hasProfitTarget && (
+                  <th className="py-2 px-2 text-right whitespace-nowrap text-green-600 border-r" title="Цена для целевой чистой прибыли, ₽">
+                    Цена₽+
+                  </th>
+                )}
                 {/* RFBS */}
                 <th className="py-2 px-2 text-right whitespace-nowrap text-orange-600">Цена</th>
                 <th className="py-2 px-2 text-right whitespace-nowrap text-orange-500">{hasTax ? "Приб." : "Прибыль"}</th>
@@ -357,11 +384,16 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                 )}
                 <th className="py-2 px-2 text-right whitespace-nowrap text-orange-500">Марж%</th>
                 <th className="py-2 px-2 text-right whitespace-nowrap text-orange-500">Нац%</th>
+                {hasProfitTarget && (
+                  <th className="py-2 px-2 text-right whitespace-nowrap text-orange-600" title="Цена для целевой чистой прибыли, ₽">
+                    Цена₽+
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
               {paginatedResults.map((r, idx) => {
-                const totalColSpan = hasTax ? 21 : 15;
+                const totalColSpan = (hasTax ? 21 : 15) + (hasProfitTarget ? 3 : 0);
                 return (
                 <tr
                   key={`${r.article}-${idx}`}
@@ -404,6 +436,11 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                       )}
                       <td className="py-2 px-2 text-right text-muted-foreground">{hasTax ? r.fbo.netMarginPct : r.fbo.marginPct}%</td>
                       <td className="py-2 px-2 text-right text-muted-foreground border-r">{r.fbo.markupPct}%</td>
+                      {hasProfitTarget && (
+                        <td className="py-2 px-2 text-right font-semibold text-blue-800 dark:text-blue-300 border-r">
+                          {r.fbo.recommendedPriceByNetProfit != null ? fmtMoney(r.fbo.recommendedPriceByNetProfit) : "—"}
+                        </td>
+                      )}
 
                       {/* FBS */}
                       <td className="py-2 px-2 text-right font-bold text-green-700 dark:text-green-400">{fmtMoney(r.fbs.recommendedPrice)}</td>
@@ -428,6 +465,11 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                       )}
                       <td className="py-2 px-2 text-right text-muted-foreground">{hasTax ? r.fbs.netMarginPct : r.fbs.marginPct}%</td>
                       <td className="py-2 px-2 text-right text-muted-foreground border-r">{r.fbs.markupPct}%</td>
+                      {hasProfitTarget && (
+                        <td className="py-2 px-2 text-right font-semibold text-green-800 dark:text-green-300 border-r">
+                          {r.fbs.recommendedPriceByNetProfit != null ? fmtMoney(r.fbs.recommendedPriceByNetProfit) : "—"}
+                        </td>
+                      )}
 
                       {/* RFBS */}
                       <td className="py-2 px-2 text-right font-bold text-orange-700 dark:text-orange-400">{fmtMoney(r.rfbs.recommendedPrice)}</td>
@@ -446,6 +488,11 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                       )}
                       <td className="py-2 px-2 text-right text-muted-foreground">{hasTax ? r.rfbs.netMarginPct : r.rfbs.marginPct}%</td>
                       <td className="py-2 px-2 text-right text-muted-foreground">{r.rfbs.markupPct}%</td>
+                      {hasProfitTarget && (
+                        <td className="py-2 px-2 text-right font-semibold text-orange-800 dark:text-orange-300">
+                          {r.rfbs.recommendedPriceByNetProfit != null ? fmtMoney(r.rfbs.recommendedPriceByNetProfit) : "—"}
+                        </td>
+                      )}
                     </>
                   )}
                 </tr>
@@ -454,7 +501,7 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
 
               {paginatedResults.length === 0 && (
                 <tr>
-                  <td colSpan={hasTax ? 27 : 21} className="py-8 text-center text-muted-foreground">
+                  <td colSpan={(hasTax ? 27 : 21) + (hasProfitTarget ? 3 : 0)} className="py-8 text-center text-muted-foreground">
                     {searchQuery ? "Ничего не найдено" : "Нет данных"}
                   </td>
                 </tr>

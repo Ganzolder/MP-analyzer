@@ -80,6 +80,8 @@ export interface BulkCalcFulfillment {
   taxAmount: number;        // сумма налога
   netProfit: number;        // чистая прибыль после налога
   netMarginPct: number;     // маржинальность после налога
+  /** Цена для достижения глобальной цели чистой прибыли ₽/шт (если задана в запросе) */
+  recommendedPriceByNetProfit?: number;
 }
 
 /**

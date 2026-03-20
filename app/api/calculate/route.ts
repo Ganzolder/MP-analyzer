@@ -4,7 +4,7 @@ import prisma from "@/lib/db/prisma";
 /**
  * POST /api/calculate
  * Полный расчёт стоимости товара для FBO, FBS и RFBS
- * + опциональный обратный расчёт (рекомендуемая цена по заданной маржинальности)
+ * + опциональный обратный расчёт: цена по целевой марже % и/или по целевой чистой прибыли ₽
  */
 export async function POST(request: NextRequest) {
   try {
@@ -24,6 +24,7 @@ export async function POST(request: NextRequest) {
       productCost = 0,
       otherExpenses = 0,
       targetMargin, // Опциональная планируемая маржинальность (%)
+      targetNetProfitRub, // Опциональная целевая чистая прибыль на 1 шт., ₽
       taxRegime = "none", // none | usn6 | usn15 | nds22 — для обратного расчёта цены по марже
     } = body;
 
@@ -356,23 +357,26 @@ export async function POST(request: NextRequest) {
     const rfbsMarkup = totalCost > 0 ? Math.round(rfbsProfit / totalCost * 10000) / 100 : 0; // наценка
 
     // ─── 7. ОБРАТНЫЙ РАСЧЁТ (АЛГЕБРАИЧЕСКИЙ) ─────────────────────
-    // Если указана целевая маржинальность И себестоимость > 0,
-    // рассчитываем рекомендуемую цену для каждого типа отгрузки
+    // Целевая маржа % и/или целевая чистая прибыль ₽ (можно оба сразу)
     let reverseCalculation: any = null;
-    
-    if (targetMargin !== undefined && targetMargin !== null && totalCost > 0) {
-      // Целевая маржинальность = netProfit/price. netProfit учитывает налог по выбранному режиму.
-      const marginFraction = targetMargin / 100;
-      const regime = String(taxRegime || "none");
 
-      // Цена из условия: netProfit/price = targetMargin/100, netProfit с учётом налога.
-      // none: netProfit = price*(1-pctRate) - fixedFees - totalCost  => price = (totalCost+fixedFees)/(1-pctRate-m)
-      // usn6: netProfit = 0.94*(price*(1-pctRate)-fixedFees)-totalCost  => price = (0.94*fixedFees+totalCost)/(0.94*(1-pctRate)-m)
-      // usn15: netProfit = 0.85*(price*(1-pctRate)-fixedFees-totalCost)  => price = 0.85*(fixedFees+totalCost)/(0.85*(1-pctRate)-m)
-      // nds22: при profit>0 netProfit = (price*(1-pctRate)-fixedFees-totalCost)*75/122 (НДС/НП от полного totalCost).
-      // При убытке до налогов обратная формула может расходиться с пошаговым max(VAT,0)+НП.
-      // price = (fixedFees+totalCost)*75/122 / ((1-pctRate)*75/122-m)
-      const priceFormula = (
+    const regime = String(taxRegime || "none");
+    const hasMarginTarget =
+      targetMargin !== undefined &&
+      targetMargin !== null &&
+      !isNaN(Number(targetMargin)) &&
+      Number(targetMargin) >= 0;
+    const hasProfitTarget =
+      targetNetProfitRub !== undefined &&
+      targetNetProfitRub !== null &&
+      !isNaN(Number(targetNetProfitRub)) &&
+      Number(targetNetProfitRub) >= 0;
+
+    if (totalCost > 0 && (hasMarginTarget || hasProfitTarget)) {
+      const marginFraction = hasMarginTarget ? Number(targetMargin) / 100 : 0;
+      const profitTargetP = hasProfitTarget ? Number(targetNetProfitRub) : 0;
+
+      const priceFormulaMargin = (
         pctRate: number,
         fixedFees: number,
         m: number
@@ -391,79 +395,113 @@ export async function POST(request: NextRequest) {
         return { numerator: totalCost + fixedFees, denominator: oneMinusPct - m };
       };
 
-      const computeRequiredPrice = (
-        fulfillment: "fbo" | "fbs" | "rfbs",
-        fixedFees: number
-      ): number => {
-        const brackets: { maxPrice: number; pct: number }[] = [];
+      const priceForTargetNetProfit = (pctRate: number, fixedFees: number, P: number): number => {
+        const oneMinusPct = 1 - pctRate;
+        if (oneMinusPct <= 0) return 0;
+        if (regime === "usn6") {
+          return (P + totalCost + 0.94 * fixedFees) / (0.94 * oneMinusPct);
+        }
+        if (regime === "usn15") {
+          return (P / 0.85 + fixedFees + totalCost) / oneMinusPct;
+        }
+        if (regime === "nds22") {
+          const k = 75 / 122;
+          return (P / k + fixedFees + totalCost) / oneMinusPct;
+        }
+        return (P + fixedFees + totalCost) / oneMinusPct;
+      };
 
+      const buildBrackets = (fulfillment: "fbo" | "fbs" | "rfbs"): { maxPrice: number; pct: number }[] => {
         if (fulfillment === "rfbs") {
-          brackets.push({ maxPrice: Infinity, pct: commissionRecord?.rfbs || 0 });
-        } else if (fulfillment === "fbo") {
+          return [{ maxPrice: Infinity, pct: commissionRecord?.rfbs || 0 }];
+        }
+        if (fulfillment === "fbo") {
           const fboC = cascadeFill([
             commissionRecord?.fboUpTo100, commissionRecord?.fbo100To300,
             commissionRecord?.fbo300To500, commissionRecord?.fbo500To1500,
             commissionRecord?.fboOver1500,
           ]);
-          brackets.push(
+          return [
             { maxPrice: 100, pct: fboC[0] },
             { maxPrice: 300, pct: fboC[1] },
             { maxPrice: 500, pct: fboC[2] },
             { maxPrice: 1500, pct: fboC[3] },
             { maxPrice: Infinity, pct: fboC[4] },
-          );
-        } else {
-          const fbsC = cascadeFill([
-            commissionRecord?.fbsUpTo100, commissionRecord?.fbs100To300,
-            commissionRecord?.fbsOver300, null, null,
-          ]);
-          brackets.push(
-            { maxPrice: 100, pct: fbsC[0] },
-            { maxPrice: 300, pct: fbsC[1] },
-            { maxPrice: 500, pct: fbsC[2] },
-            { maxPrice: 1500, pct: fbsC[3] },
-            { maxPrice: Infinity, pct: fbsC[4] },
-          );
+          ];
         }
+        const fbsC = cascadeFill([
+          commissionRecord?.fbsUpTo100, commissionRecord?.fbs100To300,
+          commissionRecord?.fbsOver300, null, null,
+        ]);
+        return [
+          { maxPrice: 100, pct: fbsC[0] },
+          { maxPrice: 300, pct: fbsC[1] },
+          { maxPrice: 500, pct: fbsC[2] },
+          { maxPrice: 1500, pct: fbsC[3] },
+          { maxPrice: Infinity, pct: fbsC[4] },
+        ];
+      };
 
+      const computeRequiredPriceMargin = (
+        fulfillment: "fbo" | "fbs" | "rfbs",
+        fixedFees: number
+      ): number => {
+        const brackets = buildBrackets(fulfillment);
         for (const bracket of brackets) {
           const pctRate = (bracket.pct + acquiringPct) / 100;
-          const { numerator, denominator } = priceFormula(pctRate, fixedFees, marginFraction);
+          const { numerator, denominator } = priceFormulaMargin(pctRate, fixedFees, marginFraction);
           if (denominator <= 0) continue;
           const requiredPrice = numerator / denominator;
           if (requiredPrice <= bracket.maxPrice) {
             return Math.round(requiredPrice * 100) / 100;
           }
         }
-
         const lastBracket = brackets[brackets.length - 1];
         const pctRate = (lastBracket.pct + acquiringPct) / 100;
-        const { numerator, denominator } = priceFormula(pctRate, fixedFees, marginFraction);
+        const { numerator, denominator } = priceFormulaMargin(pctRate, fixedFees, marginFraction);
         if (denominator <= 0) return 0;
         return Math.round((numerator / denominator) * 100) / 100;
       };
-      
-      // Фиксированные сборы для каждого типа
+
+      const computeRequiredPriceNetProfit = (
+        fulfillment: "fbo" | "fbs" | "rfbs",
+        fixedFees: number
+      ): number => {
+        const brackets = buildBrackets(fulfillment);
+        for (const bracket of brackets) {
+          const pctRate = (bracket.pct + acquiringPct) / 100;
+          const requiredPrice = priceForTargetNetProfit(pctRate, fixedFees, profitTargetP);
+          if (requiredPrice > 0 && requiredPrice <= bracket.maxPrice) {
+            return Math.round(requiredPrice * 100) / 100;
+          }
+        }
+        const lastBracket = brackets[brackets.length - 1];
+        const pctRate = (lastBracket.pct + acquiringPct) / 100;
+        const p = priceForTargetNetProfit(pctRate, fixedFees, profitTargetP);
+        return Math.round(p * 100) / 100;
+      };
+
       const fboFixedFees = fboShipping.cost + resolvedLastMileFee;
       const fbsFixedFees = fbsShipping.cost + fbsDispatchFee + resolvedDeliveryToPickupPoint;
       const rfbsFixedFees = rfbsLogisticsCost;
-      
-      const fboRequiredPrice = computeRequiredPrice("fbo", fboFixedFees);
-      const fbsRequiredPrice = computeRequiredPrice("fbs", fbsFixedFees);
-      const rfbsRequiredPrice = computeRequiredPrice("rfbs", rfbsFixedFees);
-      
-      // Наценка от себестоимости для текущей цены
-      const fboMarkupFromCost = totalCost > 0 ? Math.round(fboProfit / totalCost * 10000) / 100 : 0;
-      const fbsMarkupFromCost = totalCost > 0 ? Math.round(fbsProfit / totalCost * 10000) / 100 : 0;
-      const rfbsMarkupFromCost = totalCost > 0 ? Math.round(rfbsProfit / totalCost * 10000) / 100 : 0;
-      
+
       reverseCalculation = {
-        targetMargin,
         marginMode: "margin",
         taxRegime: regime,
-        fbo: { requiredPrice: fboRequiredPrice, currentMarkupFromCost: fboMarkupFromCost },
-        fbs: { requiredPrice: fbsRequiredPrice, currentMarkupFromCost: fbsMarkupFromCost },
-        rfbs: { requiredPrice: rfbsRequiredPrice, currentMarkupFromCost: rfbsMarkupFromCost },
+        ...(hasMarginTarget ? { targetMargin: Number(targetMargin) } : {}),
+        ...(hasProfitTarget ? { targetNetProfitRub: profitTargetP } : {}),
+        fbo: {
+          ...(hasMarginTarget ? { requiredPrice: computeRequiredPriceMargin("fbo", fboFixedFees) } : {}),
+          ...(hasProfitTarget ? { requiredPriceByNetProfit: computeRequiredPriceNetProfit("fbo", fboFixedFees) } : {}),
+        },
+        fbs: {
+          ...(hasMarginTarget ? { requiredPrice: computeRequiredPriceMargin("fbs", fbsFixedFees) } : {}),
+          ...(hasProfitTarget ? { requiredPriceByNetProfit: computeRequiredPriceNetProfit("fbs", fbsFixedFees) } : {}),
+        },
+        rfbs: {
+          ...(hasMarginTarget ? { requiredPrice: computeRequiredPriceMargin("rfbs", rfbsFixedFees) } : {}),
+          ...(hasProfitTarget ? { requiredPriceByNetProfit: computeRequiredPriceNetProfit("rfbs", rfbsFixedFees) } : {}),
+        },
       };
     }
 

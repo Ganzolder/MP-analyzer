@@ -31,12 +31,13 @@ interface FulfillmentResult {
 }
 
 interface ReverseCalcResult {
-  targetMargin: number;
+  targetMargin?: number;
+  targetNetProfitRub?: number;
   marginMode: string;
   taxRegime?: string; // "none" | "usn6" | "usn15" | "nds22"
-  fbo: { requiredPrice: number; currentMarkupFromCost: number };
-  fbs: { requiredPrice: number; currentMarkupFromCost: number };
-  rfbs: { requiredPrice: number; currentMarkupFromCost: number };
+  fbo: { requiredPrice?: number; requiredPriceByNetProfit?: number };
+  fbs: { requiredPrice?: number; requiredPriceByNetProfit?: number };
+  rfbs: { requiredPrice?: number; requiredPriceByNetProfit?: number };
 }
 
 interface CalcResult {
@@ -135,6 +136,7 @@ export function OzonSingleProductCalculator() {
 
   // Желаемая наценка / маржинальность (опциональное поле)
   const [targetMargin, setTargetMargin] = useState<string>("");
+  const [targetNetProfitRub, setTargetNetProfitRub] = useState<string>("");
 
   // Планируемые продажи и возвраты
   const [plannedQuantity, setPlannedQuantity] = useState<string>("");
@@ -415,6 +417,11 @@ export function OzonSingleProductCalculator() {
         requestBody.marginMode = "margin";
       }
 
+      const profitNum = parseFloat(targetNetProfitRub.replace(/\s/g, ""));
+      if (!isNaN(profitNum) && profitNum >= 0) {
+        requestBody.targetNetProfitRub = profitNum;
+      }
+
       const response = await fetch("/api/calculate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -496,59 +503,6 @@ export function OzonSingleProductCalculator() {
     const nds22 = mkResult(nds22Total, { vatPayable, profitTax });
 
     return { none, usn6, usn15, nds22 };
-  };
-
-  // ─── Расчёт целевой цены по маржинальности с учётом текущего налогового режима (клиентский) ──
-  const computeTargetPrices = (regime: string): { fbo: number; fbs: number; rfbs: number } | null => {
-    if (!calcResult || !calcResult.reverseCalculation) return null;
-    const targetM = calcResult.reverseCalculation.targetMargin;
-    if (!targetM || targetM <= 0) return null;
-    const tc = calcResult.totalCost || 0;
-    if (tc <= 0) return null;
-
-    const m = targetM / 100;
-
-    const getFboFixedFees = () => {
-      const f = calcResult.fbo;
-      return f.shippingCost + (f.lastMileFee ?? 0);
-    };
-    const getFbsFixedFees = () => {
-      const f = calcResult.fbs;
-      return f.shippingCost + (f.dispatchFee ?? 0) + (f.deliveryToPickupPoint ?? 0);
-    };
-    const getRfbsFixedFees = () => {
-      return calcResult.rfbs.shippingCost;
-    };
-
-    const computePrice = (commPct: number, fixedFees: number): number => {
-      const pctRate = (commPct + calcResult.acquiringPct) / 100;
-      const oneMinusPct = 1 - pctRate;
-      let numerator: number;
-      let denominator: number;
-      if (regime === "usn6") {
-        numerator = 0.94 * fixedFees + tc;
-        denominator = 0.94 * oneMinusPct - m;
-      } else if (regime === "usn15") {
-        numerator = 0.85 * (fixedFees + tc);
-        denominator = 0.85 * oneMinusPct - m;
-      } else if (regime === "nds22") {
-        // Согласовано с calculateAllTaxes nds22 (k=75/122 при profit>0)
-        const k = 75 / 122;
-        numerator = (fixedFees + tc) * k;
-        denominator = k * oneMinusPct - m;
-      } else {
-        numerator = tc + fixedFees;
-        denominator = oneMinusPct - m;
-      }
-      if (denominator <= 0) return 0;
-      return Math.round(numerator / denominator * 100) / 100;
-    };
-
-    return {
-      fbo: computePrice(calcResult.fbo.commissionPct, getFboFixedFees()),
-      fbs: computePrice(calcResult.fbs.commissionPct, getFbsFixedFees()),
-      rfbs: computePrice(calcResult.rfbs.commissionPct, getRfbsFixedFees()),
-    };
   };
 
   return (
@@ -1183,43 +1137,78 @@ export function OzonSingleProductCalculator() {
             </p>
           </div>
 
-          {/* Планируемая маржинальность (целевой расчёт цены) */}
-          <div className="rounded-lg border bg-amber-50/50 dark:bg-amber-950/20 p-4 space-y-3">
-            <div className="flex items-center gap-2">
-              <Target className="h-4 w-4 text-amber-600" />
-              <Label className="text-sm font-semibold text-amber-800 dark:text-amber-300" htmlFor="targetMargin">
-                Планируемая маржинальность, %
-              </Label>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Info className="h-4 w-4 text-muted-foreground cursor-help" />
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-xs">
-                    <p>
-                      Если указано — калькулятор покажет рекомендуемую цену для каждого типа
-                      отгрузки, при которой маржинальность (доля прибыли от цены) будет равна указанному %.
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+          {/* Целевые показатели: маржа % и/или чистая прибыль ₽ */}
+          <div className="rounded-lg border bg-amber-50/50 dark:bg-amber-950/20 p-4 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Target className="h-4 w-4 text-amber-600" />
+                  <Label className="text-sm font-semibold text-amber-800 dark:text-amber-300" htmlFor="targetMargin">
+                    Планируемая маржинальность, %
+                  </Label>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-4 w-4 text-muted-foreground cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs">
+                        <p>
+                          Чистая маржинальность от цены (после налогов по выбранному режиму). Рекомендуемая цена — с сервера.
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+                <Input
+                  id="targetMargin"
+                  type="text"
+                  value={targetMargin ? formatNumber(targetMargin) : ""}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/\s/g, "");
+                    if (val === "" || /^\d*\.?\d*$/.test(val)) {
+                      setTargetMargin(val);
+                    }
+                  }}
+                  placeholder="Например: 30"
+                  className="bg-white dark:bg-background"
+                />
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Target className="h-4 w-4 text-amber-600" />
+                  <Label className="text-sm font-semibold text-amber-800 dark:text-amber-300" htmlFor="targetNetProfitRub">
+                    Целевая чистая прибыль, ₽
+                  </Label>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="h-4 w-4 text-muted-foreground cursor-help" />
+                      </TooltipTrigger>
+                      <TooltipContent className="max-w-xs">
+                        <p>
+                          Чистая прибыль на 1 шт. после налогов (тот же смысл, что и для маржи %). Можно указать вместе с % — тогда в результатах будут обе расчётные цены.
+                        </p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+                <Input
+                  id="targetNetProfitRub"
+                  type="text"
+                  value={targetNetProfitRub ? formatNumber(targetNetProfitRub) : ""}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/\s/g, "");
+                    if (val === "" || /^\d*\.?\d*$/.test(val)) {
+                      setTargetNetProfitRub(val);
+                    }
+                  }}
+                  placeholder="Например: 1000"
+                  className="bg-white dark:bg-background"
+                />
+              </div>
             </div>
-
-            <Input
-              id="targetMargin"
-              type="text"
-              value={targetMargin ? formatNumber(targetMargin) : ""}
-              onChange={(e) => {
-                const val = e.target.value.replace(/\s/g, "");
-                if (val === "" || /^\d*\.?\d*$/.test(val)) {
-                  setTargetMargin(val);
-                }
-              }}
-              placeholder="Например: 30"
-              className="bg-white dark:bg-background"
-            />
             <p className="text-xs text-muted-foreground">
-              Маржинальность = (Цена − Себестоимость − сборы) / Цена × 100%. Необязательное поле. Если указано — в результатах появится рекомендуемая цена.
+              Оба поля необязательны; можно заполнить одно или оба. Расчётная цена появится в блоке результатов после «Рассчитать».
             </p>
           </div>
         </CardContent>
@@ -1709,80 +1698,89 @@ export function OzonSingleProductCalculator() {
                   </tr>
                   )}
 
-                  {/* Наценка от себестоимости (текущая, при обратном расчёте) */}
-                  {calcResult.reverseCalculation && (
-                    <tr className="border-t">
-                      <td className="py-3 px-3 font-medium">
-                        Текущая наценка
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Info className="h-3.5 w-3.5 text-muted-foreground inline ml-1 cursor-help" />
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-xs">
-                              <p className="text-xs">
-                                Прибыль / Себестоимость × 100%. 
-                                Показывает, какой процент от себестоимости составляет ваша прибыль при текущей цене.
-                              </p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </td>
-                      <td className="text-right py-3 px-3">
-                        <span className={`font-bold ${calcResult.reverseCalculation.fbo.currentMarkupFromCost >= 0 ? "text-green-600" : "text-red-600"}`}>
-                          {calcResult.reverseCalculation.fbo.currentMarkupFromCost}%
-                        </span>
-                      </td>
-                      <td className="text-right py-3 px-3">
-                        <span className={`font-bold ${calcResult.reverseCalculation.fbs.currentMarkupFromCost >= 0 ? "text-green-600" : "text-red-600"}`}>
-                          {calcResult.reverseCalculation.fbs.currentMarkupFromCost}%
-                        </span>
-                      </td>
-                      <td className="text-right py-3 px-3">
-                        <span className={`font-bold ${calcResult.reverseCalculation.rfbs.currentMarkupFromCost >= 0 ? "text-green-600" : "text-red-600"}`}>
-                          {calcResult.reverseCalculation.rfbs.currentMarkupFromCost}%
-                        </span>
-                      </td>
-                    </tr>
-                  )}
+                  {/* Рекомендуемая цена по целевой марже % (ответ API) */}
+                  {calcResult.reverseCalculation &&
+                    calcResult.reverseCalculation.targetMargin !== undefined &&
+                    calcResult.reverseCalculation.fbo.requiredPrice != null &&
+                    calcResult.reverseCalculation.fbo.requiredPrice >= 0 && (() => {
+                      const taxLabel =
+                        taxRegime === "usn6"
+                          ? "с учётом УСН 6%"
+                          : taxRegime === "usn15"
+                            ? "с учётом УСН 15%"
+                            : taxRegime === "nds22"
+                              ? "с учётом НДС 22% + прибыль 25%"
+                              : "без учёта налога";
+                      const rc = calcResult.reverseCalculation;
+                      return (
+                        <tr className="border-t-2 bg-amber-50/50 dark:bg-amber-950/20">
+                          <td className="py-3 px-3 font-bold text-amber-800 dark:text-amber-300">
+                            <div className="flex items-center gap-1.5">
+                              <Target className="h-4 w-4" />
+                              Цена при маржинальности {rc.targetMargin}%
+                            </div>
+                            <span className="text-xs font-normal text-muted-foreground">{taxLabel}</span>
+                          </td>
+                          <td className="text-right py-3 px-3">
+                            <span className="font-bold text-amber-700 dark:text-amber-400 text-base">
+                              {fmtMoney(rc.fbo.requiredPrice!)}
+                            </span>
+                          </td>
+                          <td className="text-right py-3 px-3">
+                            <span className="font-bold text-amber-700 dark:text-amber-400 text-base">
+                              {fmtMoney(rc.fbs.requiredPrice!)}
+                            </span>
+                          </td>
+                          <td className="text-right py-3 px-3">
+                            <span className="font-bold text-amber-700 dark:text-amber-400 text-base">
+                              {fmtMoney(rc.rfbs.requiredPrice!)}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })()}
 
-                  {/* Рекомендуемая цена (обратный расчёт, с учётом текущего налогового режима) */}
-                  {calcResult.reverseCalculation && (() => {
-                    const tp = computeTargetPrices(taxRegime);
-                    if (!tp) return null;
-                    const taxLabel = taxRegime === "usn6" ? "с учётом УСН 6%"
-                      : taxRegime === "usn15" ? "с учётом УСН 15%"
-                      : taxRegime === "nds22" ? "с учётом НДС 22% + прибыль 25%"
-                      : "без учёта налога";
-                    return (
-                      <tr className="border-t-2 bg-amber-50/50 dark:bg-amber-950/20">
-                        <td className="py-3 px-3 font-bold text-amber-800 dark:text-amber-300">
-                          <div className="flex items-center gap-1.5">
-                            <Target className="h-4 w-4" />
-                            Цена при маржинальности {calcResult.reverseCalculation.targetMargin}%
-                          </div>
-                          <span className="text-xs font-normal text-muted-foreground">
-                            {taxLabel}
-                          </span>
-                        </td>
-                        <td className="text-right py-3 px-3">
-                          <span className="font-bold text-amber-700 dark:text-amber-400 text-base">
-                            {fmtMoney(tp.fbo)}
-                          </span>
-                        </td>
-                        <td className="text-right py-3 px-3">
-                          <span className="font-bold text-amber-700 dark:text-amber-400 text-base">
-                            {fmtMoney(tp.fbs)}
-                          </span>
-                        </td>
-                        <td className="text-right py-3 px-3">
-                          <span className="font-bold text-amber-700 dark:text-amber-400 text-base">
-                            {fmtMoney(tp.rfbs)}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })()}
+                  {/* Рекомендуемая цена по целевой чистой прибыли ₽ */}
+                  {calcResult.reverseCalculation &&
+                    calcResult.reverseCalculation.targetNetProfitRub !== undefined &&
+                    calcResult.reverseCalculation.fbo.requiredPriceByNetProfit != null &&
+                    calcResult.reverseCalculation.fbo.requiredPriceByNetProfit >= 0 && (() => {
+                      const taxLabel =
+                        taxRegime === "usn6"
+                          ? "с учётом УСН 6%"
+                          : taxRegime === "usn15"
+                            ? "с учётом УСН 15%"
+                            : taxRegime === "nds22"
+                              ? "с учётом НДС 22% + прибыль 25%"
+                              : "без учёта налога";
+                      const rc = calcResult.reverseCalculation;
+                      return (
+                        <tr className="border-t-2 bg-amber-50/50 dark:bg-amber-950/20">
+                          <td className="py-3 px-3 font-bold text-amber-800 dark:text-amber-300">
+                            <div className="flex items-center gap-1.5">
+                              <Target className="h-4 w-4" />
+                              Цена при чистой прибыли {fmtMoney(rc.targetNetProfitRub!)}
+                            </div>
+                            <span className="text-xs font-normal text-muted-foreground">{taxLabel}</span>
+                          </td>
+                          <td className="text-right py-3 px-3">
+                            <span className="font-bold text-amber-700 dark:text-amber-400 text-base">
+                              {fmtMoney(rc.fbo.requiredPriceByNetProfit!)}
+                            </span>
+                          </td>
+                          <td className="text-right py-3 px-3">
+                            <span className="font-bold text-amber-700 dark:text-amber-400 text-base">
+                              {fmtMoney(rc.fbs.requiredPriceByNetProfit!)}
+                            </span>
+                          </td>
+                          <td className="text-right py-3 px-3">
+                            <span className="font-bold text-amber-700 dark:text-amber-400 text-base">
+                              {fmtMoney(rc.rfbs.requiredPriceByNetProfit!)}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })()}
                 </tbody>
               </table>
             </div>

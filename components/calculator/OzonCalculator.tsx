@@ -39,6 +39,7 @@ export function OzonCalculator() {
 
   // Прочие расходы и налоговый режим
   const [otherExpenses, setOtherExpenses] = useState<string>("");
+  const [bulkTargetNetProfit, setBulkTargetNetProfit] = useState<string>("");
   const [taxRegime, setTaxRegime] = useState<string>("none");
 
   // Тарифы из настроек (загружаются из БД)
@@ -214,19 +215,25 @@ export function OzonCalculator() {
         catMargins[cat] = margin;
       }
 
+      const bulkBody: Record<string, unknown> = {
+        products,
+        globalMargin: ozon.marginSettings.global,
+        categoryMargins: catMargins,
+        pickupPointType,
+        acceptanceType,
+        marginMode: "margin",
+        otherExpenses: parseFloat(otherExpenses) || 0,
+        taxRegime: taxRegime || "none",
+      };
+      const profitN = parseFloat(bulkTargetNetProfit.replace(/\s/g, ""));
+      if (!isNaN(profitN) && profitN >= 0) {
+        bulkBody.targetNetProfitRub = profitN;
+      }
+
       const response = await fetch("/api/calculate-bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          products,
-          globalMargin: ozon.marginSettings.global,
-          categoryMargins: catMargins,
-          pickupPointType,
-          acceptanceType,
-          marginMode: "margin",
-          otherExpenses: parseFloat(otherExpenses) || 0,
-          taxRegime: taxRegime || "none",
-        }),
+        body: JSON.stringify(bulkBody),
       });
 
       const data = await response.json();
@@ -464,7 +471,7 @@ export function OzonCalculator() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="bulk-otherExpenses">Прочие затраты, ₽ на шт</Label>
                       <Input
@@ -512,6 +519,21 @@ export function OzonCalculator() {
                       </Select>
                       <p className="text-xs text-muted-foreground">
                         Налоги учитываются при расчёте рекомендуемой цены и итоговой прибыли
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="bulk-target-profit">Целевая чистая прибыль, ₽ на шт</Label>
+                      <Input
+                        id="bulk-target-profit"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={bulkTargetNetProfit}
+                        onChange={(e) => setBulkTargetNetProfit(e.target.value)}
+                        placeholder="Необязательно"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Дополнительно к цене по марже: колонки «Цена₽+» — цена для этой чистой прибыли после налогов
                       </p>
                     </div>
                   </div>
