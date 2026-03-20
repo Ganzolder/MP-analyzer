@@ -40,6 +40,8 @@ export function OzonCalculator() {
   // Прочие расходы и налоговый режим
   const [otherExpenses, setOtherExpenses] = useState<string>("");
   const [bulkTargetNetProfit, setBulkTargetNetProfit] = useState<string>("");
+  const [bulkProfitMinMarginPct, setBulkProfitMinMarginPct] = useState<string>("");
+  const [bulkProfitMaxMarginPct, setBulkProfitMaxMarginPct] = useState<string>("");
   const [taxRegime, setTaxRegime] = useState<string>("none");
 
   // Тарифы из настроек (загружаются из БД)
@@ -228,6 +230,14 @@ export function OzonCalculator() {
       const profitN = parseFloat(bulkTargetNetProfit.replace(/\s/g, ""));
       if (!isNaN(profitN) && profitN >= 0) {
         bulkBody.targetNetProfitRub = profitN;
+        const minN = parseFloat(bulkProfitMinMarginPct.replace(/\s/g, "").replace(",", "."));
+        if (!isNaN(minN) && minN >= 0 && minN <= 100) {
+          bulkBody.targetNetProfitMinMarginPct = minN;
+        }
+        const maxN = parseFloat(bulkProfitMaxMarginPct.replace(/\s/g, "").replace(",", "."));
+        if (!isNaN(maxN) && maxN >= 0 && maxN <= 100) {
+          bulkBody.targetNetProfitMaxMarginPct = maxN;
+        }
       }
 
       const response = await fetch("/api/calculate-bulk", {
@@ -536,6 +546,38 @@ export function OzonCalculator() {
                         Дополнительно к цене по марже: колонки «Цена₽+» — цена для этой чистой прибыли после налогов
                       </p>
                     </div>
+                    <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="bulk-profit-min-margin">Но не менее (чистая маржа), %</Label>
+                        <Input
+                          id="bulk-profit-min-margin"
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="100"
+                          value={bulkProfitMinMarginPct}
+                          onChange={(e) => setBulkProfitMinMarginPct(e.target.value)}
+                          placeholder="Необязательно"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="bulk-profit-max-margin">Но не более (чистая маржа), %</Label>
+                        <Input
+                          id="bulk-profit-max-margin"
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="100"
+                          value={bulkProfitMaxMarginPct}
+                          onChange={(e) => setBulkProfitMaxMarginPct(e.target.value)}
+                          placeholder="Необязательно"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground md:col-span-3">
+                      Сначала считается цена под цель в ₽; если при этом чистая маржа выходит за указанные %, подставляется
+                      цена по соответствующей границе (как у глобальной маржи). Работает только вместе с целью в ₽.
+                    </p>
                   </div>
                 </CardContent>
               </Card>

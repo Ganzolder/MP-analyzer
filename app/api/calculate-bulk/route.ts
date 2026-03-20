@@ -21,6 +21,8 @@ export async function POST(request: NextRequest) {
       otherExpenses = 0, // прочие затраты на единицу товара
       taxRegime = "none", // "none" | "usn6" | "usn15" | "nds22"
       targetNetProfitRub, // опционально: целевая чистая прибыль ₽/шт (глобально на партию)
+      targetNetProfitMinMarginPct, // опционально: не ниже этой чистой маржи, %
+      targetNetProfitMaxMarginPct, // опционально: не выше этой чистой маржи, %
     } = body;
 
     if (!Array.isArray(products) || products.length === 0) {
@@ -36,6 +38,50 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    const hasGlobalProfitTarget =
+      targetNetProfitRub !== undefined &&
+      targetNetProfitRub !== null &&
+      !isNaN(Number(targetNetProfitRub)) &&
+      Number(targetNetProfitRub) >= 0;
+    const globalProfitP = hasGlobalProfitTarget ? Number(targetNetProfitRub) : 0;
+
+    const parsePctBound = (v: unknown): number | undefined => {
+      if (v === undefined || v === null || v === "") return undefined;
+      const n = Number(v);
+      if (isNaN(n)) return undefined;
+      return n;
+    };
+
+    let profitMarginMin: number | undefined;
+    let profitMarginMax: number | undefined;
+    if (hasGlobalProfitTarget) {
+      const rmin = parsePctBound(targetNetProfitMinMarginPct);
+      const rmax = parsePctBound(targetNetProfitMaxMarginPct);
+      if (rmin !== undefined && (rmin < 0 || rmin > 100)) {
+        return NextResponse.json(
+          { success: false, error: "«Не менее»: процент должен быть от 0 до 100" },
+          { status: 400 }
+        );
+      }
+      if (rmax !== undefined && (rmax < 0 || rmax > 100)) {
+        return NextResponse.json(
+          { success: false, error: "«Не более»: процент должен быть от 0 до 100" },
+          { status: 400 }
+        );
+      }
+      if (rmin !== undefined && rmax !== undefined && rmin > rmax) {
+        return NextResponse.json(
+          { success: false, error: "Минимальная маржа не может быть больше максимальной" },
+          { status: 400 }
+        );
+      }
+      profitMarginMin = rmin;
+      profitMarginMax = rmax;
+    }
+
+    const hasProfitMarginBounds =
+      hasGlobalProfitTarget && (profitMarginMin !== undefined || profitMarginMax !== undefined);
 
     const mkt = "ozon";
 
@@ -348,13 +394,6 @@ export async function POST(request: NextRequest) {
       return Math.round((numerator / denominator) * 100) / 100;
     }
 
-    const hasGlobalProfitTarget =
-      targetNetProfitRub !== undefined &&
-      targetNetProfitRub !== null &&
-      !isNaN(Number(targetNetProfitRub)) &&
-      Number(targetNetProfitRub) >= 0;
-    const globalProfitP = hasGlobalProfitTarget ? Number(targetNetProfitRub) : 0;
-
     function computeRecommendedPriceByNetProfit(
       commission: typeof allCommissions[0] | null,
       fulfillment: "fbo" | "fbs" | "rfbs",
@@ -527,6 +566,120 @@ export async function POST(request: NextRequest) {
         const otherExp = parseFloat(otherExpenses) || 0;
         const totalCost = cost + otherExp;
         const commission = findCommission(category);
+        const regimeStr = String(taxRegime || "none");
+
+        function comparableMarginAtProfitPrice(
+          fulfillment: "fbo" | "fbs" | "rfbs",
+          P: number
+        ): number {
+          if (fulfillment === "rfbs") {
+            const f = calculateFulfillment(commission, "rfbs", P, 0, 0, 0, totalCost, otherExp, regimeStr);
+            return regimeStr !== "none" ? f.netMarginPct : f.marginPct;
+          }
+          const band = P <= 300 ? "up_to_300" : "over_300";
+          if (fulfillment === "fbo") {
+            const ship = calculateShipping("fbo", volumeLiters, band);
+            const f = calculateFulfillment(
+              commission,
+              "fbo",
+              P,
+              ship,
+              0,
+              resolvedLastMileFee,
+              totalCost,
+              otherExp,
+              regimeStr
+            );
+            return regimeStr !== "none" ? f.netMarginPct : f.marginPct;
+          }
+          const ship = calculateShipping("fbs", volumeLiters, band);
+          const f = calculateFulfillment(
+            commission,
+            "fbs",
+            P,
+            ship,
+            fbsDispatchFee,
+            resolvedDeliveryToPickupPoint,
+            totalCost,
+            otherExp,
+            regimeStr
+          );
+          return regimeStr !== "none" ? f.netMarginPct : f.marginPct;
+        }
+
+        function iterateFboFinalPriceForMargin(marginPct: number): number {
+          const fboFixedBase = resolvedLastMileFee;
+          const fboEstimate = computeRecommendedPrice(commission, "fbo", totalCost, marginPct, fboFixedBase);
+          const fboPriceBand = fboEstimate <= 300 ? "up_to_300" : "over_300";
+          const fboShipping = calculateShipping("fbo", volumeLiters, fboPriceBand);
+          const fboPrice = computeRecommendedPrice(
+            commission,
+            "fbo",
+            totalCost,
+            marginPct,
+            fboShipping + fboFixedBase
+          );
+          const fboFinalBand = fboPrice <= 300 ? "up_to_300" : "over_300";
+          const fboFinalShipping =
+            fboFinalBand !== fboPriceBand
+              ? calculateShipping("fbo", volumeLiters, fboFinalBand)
+              : fboShipping;
+          return fboFinalBand !== fboPriceBand
+            ? computeRecommendedPrice(
+                commission,
+                "fbo",
+                totalCost,
+                marginPct,
+                fboFinalShipping + fboFixedBase
+              )
+            : fboPrice;
+        }
+
+        function iterateFbsFinalPriceForMargin(marginPct: number): number {
+          const fbsFixedBase = fbsDispatchFee + resolvedDeliveryToPickupPoint;
+          const fbsEstimate = computeRecommendedPrice(commission, "fbs", totalCost, marginPct, fbsFixedBase);
+          const fbsPriceBand = fbsEstimate <= 300 ? "up_to_300" : "over_300";
+          const fbsShipping = calculateShipping("fbs", volumeLiters, fbsPriceBand);
+          const fbsPrice = computeRecommendedPrice(
+            commission,
+            "fbs",
+            totalCost,
+            marginPct,
+            fbsShipping + fbsFixedBase
+          );
+          const fbsFinalBand = fbsPrice <= 300 ? "up_to_300" : "over_300";
+          const fbsFinalShipping =
+            fbsFinalBand !== fbsPriceBand
+              ? calculateShipping("fbs", volumeLiters, fbsFinalBand)
+              : fbsShipping;
+          return fbsFinalBand !== fbsPriceBand
+            ? computeRecommendedPrice(
+                commission,
+                "fbs",
+                totalCost,
+                marginPct,
+                fbsFinalShipping + fbsFixedBase
+              )
+            : fbsPrice;
+        }
+
+        function clampProfitPriceByMarginBounds(
+          P: number,
+          fulfillment: "fbo" | "fbs" | "rfbs"
+        ): number {
+          const m = comparableMarginAtProfitPrice(fulfillment, P);
+          if (profitMarginMax !== undefined && m > profitMarginMax) {
+            if (fulfillment === "fbo") return iterateFboFinalPriceForMargin(profitMarginMax);
+            if (fulfillment === "fbs") return iterateFbsFinalPriceForMargin(profitMarginMax);
+            return computeRecommendedPrice(commission, "rfbs", totalCost, profitMarginMax, 0);
+          }
+          if (profitMarginMin !== undefined && m < profitMarginMin) {
+            if (fulfillment === "fbo") return iterateFboFinalPriceForMargin(profitMarginMin);
+            if (fulfillment === "fbs") return iterateFbsFinalPriceForMargin(profitMarginMin);
+            return computeRecommendedPrice(commission, "rfbs", totalCost, profitMarginMin, 0);
+          }
+          return P;
+        }
 
         // Рассчитываем рекомендуемую цену для каждого типа отгрузки
 
@@ -559,6 +712,9 @@ export async function POST(request: NextRequest) {
             band2 !== band
               ? computeRecommendedPriceByNetProfit(commission, "fbo", totalCost, ship2 + fboFixedBase, globalProfitP)
               : p1;
+          if (hasProfitMarginBounds) {
+            fboPriceByProfit = clampProfitPriceByMarginBounds(fboPriceByProfit, "fbo");
+          }
         }
 
         const fbo = {
@@ -592,6 +748,9 @@ export async function POST(request: NextRequest) {
             band2 !== band
               ? computeRecommendedPriceByNetProfit(commission, "fbs", totalCost, ship2 + fbsFixedBase, globalProfitP)
               : p1;
+          if (hasProfitMarginBounds) {
+            fbsPriceByProfit = clampProfitPriceByMarginBounds(fbsPriceByProfit, "fbs");
+          }
         }
 
         const fbs = {
@@ -601,9 +760,13 @@ export async function POST(request: NextRequest) {
 
         // --- RFBS ---
         const rfbsPrice = computeRecommendedPrice(commission, "rfbs", totalCost, targetMargin, 0);
-        const rfbsPriceByProfit = hasGlobalProfitTarget
-          ? computeRecommendedPriceByNetProfit(commission, "rfbs", totalCost, 0, globalProfitP)
-          : undefined;
+        let rfbsPriceByProfit: number | undefined;
+        if (hasGlobalProfitTarget) {
+          rfbsPriceByProfit = computeRecommendedPriceByNetProfit(commission, "rfbs", totalCost, 0, globalProfitP);
+          if (hasProfitMarginBounds && rfbsPriceByProfit !== undefined) {
+            rfbsPriceByProfit = clampProfitPriceByMarginBounds(rfbsPriceByProfit, "rfbs");
+          }
+        }
 
         const rfbs = {
           ...calculateFulfillment(commission, "rfbs", rfbsPrice, 0, 0, 0, totalCost, otherExp, taxRegime),
@@ -648,6 +811,8 @@ export async function POST(request: NextRequest) {
           otherExpenses: parseFloat(otherExpenses) || 0,
           taxRegime: taxRegime || "none",
           ...(hasGlobalProfitTarget ? { targetNetProfitRub: globalProfitP } : {}),
+          ...(profitMarginMin !== undefined ? { targetNetProfitMinMarginPct: profitMarginMin } : {}),
+          ...(profitMarginMax !== undefined ? { targetNetProfitMaxMarginPct: profitMarginMax } : {}),
         },
       },
     });

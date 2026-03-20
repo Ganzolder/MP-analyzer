@@ -40,6 +40,8 @@ interface OzonBulkResultsProps {
     otherExpenses: number;
     taxRegime: string;
     targetNetProfitRub?: number;
+    targetNetProfitMinMarginPct?: number;
+    targetNetProfitMaxMarginPct?: number;
   };
 }
 
@@ -127,6 +129,14 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
     meta?.targetNetProfitRub !== undefined &&
     meta?.targetNetProfitRub !== null &&
     !isNaN(Number(meta.targetNetProfitRub));
+  const hasProfitMarginBounds =
+    hasProfitTarget &&
+    ((meta?.targetNetProfitMinMarginPct !== undefined &&
+      meta?.targetNetProfitMinMarginPct !== null &&
+      !isNaN(Number(meta.targetNetProfitMinMarginPct))) ||
+      (meta?.targetNetProfitMaxMarginPct !== undefined &&
+        meta?.targetNetProfitMaxMarginPct !== null &&
+        !isNaN(Number(meta.targetNetProfitMaxMarginPct))));
 
   // Экспорт в XLSX
   const handleExport = () => {
@@ -204,6 +214,22 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
       });
       if (hasProfitTarget && !r.error) {
         row["Цель чистой прибыли, ₽"] = meta!.targetNetProfitRub!;
+        if (hasProfitMarginBounds) {
+          if (
+            meta!.targetNetProfitMinMarginPct !== undefined &&
+            meta!.targetNetProfitMinMarginPct !== null &&
+            !isNaN(Number(meta!.targetNetProfitMinMarginPct))
+          ) {
+            row["Цель ₽: не менее маржи, %"] = meta!.targetNetProfitMinMarginPct!;
+          }
+          if (
+            meta!.targetNetProfitMaxMarginPct !== undefined &&
+            meta!.targetNetProfitMaxMarginPct !== null &&
+            !isNaN(Number(meta!.targetNetProfitMaxMarginPct))
+          ) {
+            row["Цель ₽: не более маржи, %"] = meta!.targetNetProfitMaxMarginPct!;
+          }
+        }
         row["FBO Цена (цель ₽), ₽"] =
           r.fbo.recommendedPriceByNetProfit != null ? r.fbo.recommendedPriceByNetProfit.toFixed(2) : "";
         row["FBS Цена (цель ₽), ₽"] =
@@ -246,6 +272,24 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                   {hasProfitTarget && (
                     <Badge variant="secondary">Цель чистой прибыли: {meta.targetNetProfitRub} ₽/шт</Badge>
                   )}
+                  {hasProfitMarginBounds && meta && (() => {
+                    const parts: string[] = [];
+                    if (
+                      meta.targetNetProfitMinMarginPct != null &&
+                      !isNaN(Number(meta.targetNetProfitMinMarginPct))
+                    ) {
+                      parts.push(`не ниже ${meta.targetNetProfitMinMarginPct}%`);
+                    }
+                    if (
+                      meta.targetNetProfitMaxMarginPct != null &&
+                      !isNaN(Number(meta.targetNetProfitMaxMarginPct))
+                    ) {
+                      parts.push(`не выше ${meta.targetNetProfitMaxMarginPct}%`);
+                    }
+                    return (
+                      <Badge variant="outline">Рамки цели ₽: {parts.join("; ")}</Badge>
+                    );
+                  })()}
                 </span>
               )}
             </CardDescription>
