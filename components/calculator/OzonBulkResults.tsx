@@ -245,7 +245,9 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
   };
 
   const fmtMoney = (v: number) =>
-    v.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    v != null && typeof v === "number" && !Number.isNaN(v)
+      ? v.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+      : "—";
 
   if (results.length === 0) return null;
 

@@ -28,25 +28,43 @@ function normalizeColumnName(name: string): string {
   return name.toLowerCase().trim().replace(/\s+/g, " ");
 }
 
+type FindColumnOptions = {
+  /** Повышает приоритет колонок, в заголовке которых есть % (доля/процент маржи, а не «маржа» в ₽) */
+  preferHeaderHasPercent?: boolean;
+};
+
 /**
- * Находит индекс колонки по возможным названиям
+ * Находит индекс колонки по возможным названиям.
+ * Берётся лучшее совпадение по всему заголовку (длиннее алиас и точнее совпадение — выше),
+ * чтобы не выбирать колонку «Маржа» в ₽ вместо «Маржинальность %».
  */
 function findColumnIndex(
   headers: string[],
-  possibleNames: string[]
+  possibleNames: string[],
+  opts?: FindColumnOptions
 ): number {
   const normalizedHeaders = headers.map(normalizeColumnName);
   const normalizedPossible = possibleNames.map(normalizeColumnName);
+
+  let bestIdx = -1;
+  let bestScore = -1;
 
   for (let i = 0; i < normalizedHeaders.length; i++) {
     const header = normalizedHeaders[i];
     for (const possible of normalizedPossible) {
       if (header === possible || header.includes(possible) || possible.includes(header)) {
-        return i;
+        let score = possible.length;
+        if (header === possible) score += 500;
+        else if (header.includes(possible)) score += 50;
+        if (opts?.preferHeaderHasPercent && header.includes("%")) score += 200;
+        if (score > bestScore) {
+          bestScore = score;
+          bestIdx = i;
+        }
       }
     }
   }
-  return -1;
+  return bestIdx;
 }
 
 /**
@@ -164,7 +182,9 @@ export async function parseOzonFile(file: File): Promise<ParsedFileResult> {
     const articleIdx = findColumnIndex(headers, REQUIRED_COLUMNS.article);
     const nameIdx = findColumnIndex(headers, REQUIRED_COLUMNS.name);
     const costIdx = findColumnIndex(headers, REQUIRED_COLUMNS.cost);
-    const marginIdx = findColumnIndex(headers, REQUIRED_COLUMNS.marginPercent);
+    const marginIdx = findColumnIndex(headers, REQUIRED_COLUMNS.marginPercent, {
+      preferHeaderHasPercent: true,
+    });
     const widthIdx = findColumnIndex(headers, REQUIRED_COLUMNS.width);
     const heightIdx = findColumnIndex(headers, REQUIRED_COLUMNS.height);
     const lengthIdx = findColumnIndex(headers, REQUIRED_COLUMNS.length);

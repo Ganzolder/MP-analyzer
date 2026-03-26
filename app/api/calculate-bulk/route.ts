@@ -561,8 +561,12 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        // Определяем маржу: из товара → из категории → глобальная
-        const targetMargin = marginPercent ?? (categoryMargins[category] as number) ?? globalMargin;
+        // Определяем маржу: из товара → из категории → глобальная (всегда число)
+        const rawMargin =
+          marginPercent != null && marginPercent !== ""
+            ? Number(marginPercent)
+            : (categoryMargins[category] as number | undefined) ?? Number(globalMargin);
+        const targetMargin = Number.isFinite(rawMargin) ? rawMargin : Number(globalMargin) || 0;
         const otherExp = parseFloat(otherExpenses) || 0;
         const totalCost = cost + otherExp;
         const commission = findCommission(category);
