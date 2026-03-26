@@ -3,6 +3,40 @@ import prisma from "@/lib/db/prisma";
 import type { BulkCalcResult, BulkCalcFulfillment } from "@/lib/types/calculator";
 
 /**
+ * Плановая маржа по строке: из файла → по категории → глобальная.
+ * Если в файле явно 0 при globalMargin > 0, считаем это «не задано» (частый случай с колонкой «Маржа» в ₽ или нулями)
+ * и наследуем категорию/глобальную. Явный 0% при глобальной 0 остаётся 0.
+ */
+function resolveBulkTargetMargin(
+  marginPercent: number | undefined | null,
+  category: string,
+  categoryMargins: Record<string, number>,
+  globalMargin: number
+): number {
+  const gm = Number(globalMargin);
+  const catRaw = categoryMargins[category];
+  const catNum = catRaw != null ? Number(catRaw) : NaN;
+
+  if (marginPercent == null) {
+    if (Number.isFinite(catNum)) return catNum;
+    return Number.isFinite(gm) ? gm : 0;
+  }
+
+  const mp = Number(marginPercent);
+  if (!Number.isFinite(mp)) {
+    if (Number.isFinite(catNum)) return catNum;
+    return Number.isFinite(gm) ? gm : 0;
+  }
+
+  if (mp === 0 && gm > 0) {
+    if (Number.isFinite(catNum) && catNum > 0) return catNum;
+    return gm;
+  }
+
+  return mp;
+}
+
+/**
  * POST /api/calculate-bulk
  * Массовый расчёт товаров — все запросы к БД выполняются один раз,
  * далее расчёт для каждого товара идёт полностью в памяти.
@@ -561,12 +595,12 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        // Определяем маржу: из товара → из категории → глобальная (всегда число)
-        const rawMargin =
-          marginPercent != null && marginPercent !== ""
-            ? Number(marginPercent)
-            : (categoryMargins[category] as number | undefined) ?? Number(globalMargin);
-        const targetMargin = Number.isFinite(rawMargin) ? rawMargin : Number(globalMargin) || 0;
+        const targetMargin = resolveBulkTargetMargin(
+          marginPercent,
+          category,
+          categoryMargins as Record<string, number>,
+          Number(globalMargin)
+        );
         const otherExp = parseFloat(otherExpenses) || 0;
         const totalCost = cost + otherExp;
         const commission = findCommission(category);
