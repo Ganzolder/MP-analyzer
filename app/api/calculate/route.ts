@@ -4,7 +4,8 @@ import prisma from "@/lib/db/prisma";
 /**
  * POST /api/calculate
  * Полный расчёт стоимости товара для FBO, FBS и RFBS
- * + опциональный обратный расчёт: цена по целевой марже % и/или по целевой чистой прибыли ₽
+ * + опциональный обратный расчёт: цена по целевой марже % (как доля чистой прибыли от полной себестоимости)
+ *   и/или по целевой чистой прибыли ₽
  */
 export async function POST(request: NextRequest) {
   try {
@@ -23,7 +24,7 @@ export async function POST(request: NextRequest) {
       rfbsLogisticsCost = 0, // стоимость логистики RFBS
       productCost = 0,
       otherExpenses = 0,
-      targetMargin, // Опциональная планируемая маржинальность (%)
+      targetMargin, // Опционально: % от полной себестоимости → целевая чистая прибыль = (%/100)*totalCost
       targetNetProfitRub, // Опциональная целевая чистая прибыль на 1 шт., ₽
       taxRegime = "none", // none | usn6 | usn15 | nds22 — для обратного расчёта цены по марже
     } = body;
@@ -373,27 +374,8 @@ export async function POST(request: NextRequest) {
       Number(targetNetProfitRub) >= 0;
 
     if (totalCost > 0 && (hasMarginTarget || hasProfitTarget)) {
-      const marginFraction = hasMarginTarget ? Number(targetMargin) / 100 : 0;
+      const P_margin = hasMarginTarget ? (Number(targetMargin) / 100) * totalCost : 0;
       const profitTargetP = hasProfitTarget ? Number(targetNetProfitRub) : 0;
-
-      const priceFormulaMargin = (
-        pctRate: number,
-        fixedFees: number,
-        m: number
-      ): { numerator: number; denominator: number } => {
-        const oneMinusPct = 1 - pctRate;
-        if (regime === "usn6") {
-          return { numerator: 0.94 * fixedFees + totalCost, denominator: 0.94 * oneMinusPct - m };
-        }
-        if (regime === "usn15") {
-          return { numerator: 0.85 * (fixedFees + totalCost), denominator: 0.85 * oneMinusPct - m };
-        }
-        if (regime === "nds22") {
-          const k = 75 / 122;
-          return { numerator: (fixedFees + totalCost) * k, denominator: k * oneMinusPct - m };
-        }
-        return { numerator: totalCost + fixedFees, denominator: oneMinusPct - m };
-      };
 
       const priceForTargetNetProfit = (pctRate: number, fixedFees: number, P: number): number => {
         const oneMinusPct = 1 - pctRate;
@@ -442,42 +424,22 @@ export async function POST(request: NextRequest) {
         ];
       };
 
-      const computeRequiredPriceMargin = (
+      const computeRequiredPriceForNetProfitTarget = (
         fulfillment: "fbo" | "fbs" | "rfbs",
-        fixedFees: number
+        fixedFees: number,
+        P: number
       ): number => {
         const brackets = buildBrackets(fulfillment);
         for (const bracket of brackets) {
           const pctRate = (bracket.pct + acquiringPct) / 100;
-          const { numerator, denominator } = priceFormulaMargin(pctRate, fixedFees, marginFraction);
-          if (denominator <= 0) continue;
-          const requiredPrice = numerator / denominator;
-          if (requiredPrice <= bracket.maxPrice) {
-            return Math.round(requiredPrice * 100) / 100;
-          }
-        }
-        const lastBracket = brackets[brackets.length - 1];
-        const pctRate = (lastBracket.pct + acquiringPct) / 100;
-        const { numerator, denominator } = priceFormulaMargin(pctRate, fixedFees, marginFraction);
-        if (denominator <= 0) return 0;
-        return Math.round((numerator / denominator) * 100) / 100;
-      };
-
-      const computeRequiredPriceNetProfit = (
-        fulfillment: "fbo" | "fbs" | "rfbs",
-        fixedFees: number
-      ): number => {
-        const brackets = buildBrackets(fulfillment);
-        for (const bracket of brackets) {
-          const pctRate = (bracket.pct + acquiringPct) / 100;
-          const requiredPrice = priceForTargetNetProfit(pctRate, fixedFees, profitTargetP);
+          const requiredPrice = priceForTargetNetProfit(pctRate, fixedFees, P);
           if (requiredPrice > 0 && requiredPrice <= bracket.maxPrice) {
             return Math.round(requiredPrice * 100) / 100;
           }
         }
         const lastBracket = brackets[brackets.length - 1];
         const pctRate = (lastBracket.pct + acquiringPct) / 100;
-        const p = priceForTargetNetProfit(pctRate, fixedFees, profitTargetP);
+        const p = priceForTargetNetProfit(pctRate, fixedFees, P);
         return Math.round(p * 100) / 100;
       };
 
@@ -491,16 +453,28 @@ export async function POST(request: NextRequest) {
         ...(hasMarginTarget ? { targetMargin: Number(targetMargin) } : {}),
         ...(hasProfitTarget ? { targetNetProfitRub: profitTargetP } : {}),
         fbo: {
-          ...(hasMarginTarget ? { requiredPrice: computeRequiredPriceMargin("fbo", fboFixedFees) } : {}),
-          ...(hasProfitTarget ? { requiredPriceByNetProfit: computeRequiredPriceNetProfit("fbo", fboFixedFees) } : {}),
+          ...(hasMarginTarget
+            ? { requiredPrice: computeRequiredPriceForNetProfitTarget("fbo", fboFixedFees, P_margin) }
+            : {}),
+          ...(hasProfitTarget
+            ? { requiredPriceByNetProfit: computeRequiredPriceForNetProfitTarget("fbo", fboFixedFees, profitTargetP) }
+            : {}),
         },
         fbs: {
-          ...(hasMarginTarget ? { requiredPrice: computeRequiredPriceMargin("fbs", fbsFixedFees) } : {}),
-          ...(hasProfitTarget ? { requiredPriceByNetProfit: computeRequiredPriceNetProfit("fbs", fbsFixedFees) } : {}),
+          ...(hasMarginTarget
+            ? { requiredPrice: computeRequiredPriceForNetProfitTarget("fbs", fbsFixedFees, P_margin) }
+            : {}),
+          ...(hasProfitTarget
+            ? { requiredPriceByNetProfit: computeRequiredPriceForNetProfitTarget("fbs", fbsFixedFees, profitTargetP) }
+            : {}),
         },
         rfbs: {
-          ...(hasMarginTarget ? { requiredPrice: computeRequiredPriceMargin("rfbs", rfbsFixedFees) } : {}),
-          ...(hasProfitTarget ? { requiredPriceByNetProfit: computeRequiredPriceNetProfit("rfbs", rfbsFixedFees) } : {}),
+          ...(hasMarginTarget
+            ? { requiredPrice: computeRequiredPriceForNetProfitTarget("rfbs", rfbsFixedFees, P_margin) }
+            : {}),
+          ...(hasProfitTarget
+            ? { requiredPriceByNetProfit: computeRequiredPriceForNetProfitTarget("rfbs", rfbsFixedFees, profitTargetP) }
+            : {}),
         },
       };
     }

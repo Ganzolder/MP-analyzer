@@ -134,7 +134,7 @@ export function OzonSingleProductCalculator() {
   const [productCost, setProductCost] = useState<string>("");
   const [otherExpenses, setOtherExpenses] = useState<string>("");
 
-  // Желаемая наценка / маржинальность (опциональное поле)
+  // Планируемая маржинальность % от полной себестоимости (опционально)
   const [targetMargin, setTargetMargin] = useState<string>("");
   const [targetNetProfitRub, setTargetNetProfitRub] = useState<string>("");
 
@@ -1144,7 +1144,7 @@ export function OzonSingleProductCalculator() {
                 <div className="flex items-center gap-2">
                   <Target className="h-4 w-4 text-amber-600" />
                   <Label className="text-sm font-semibold text-amber-800 dark:text-amber-300" htmlFor="targetMargin">
-                    Планируемая маржинальность, %
+                    Планируемая маржинальность, % от себестоимости
                   </Label>
                   <TooltipProvider>
                     <Tooltip>
@@ -1153,7 +1153,8 @@ export function OzonSingleProductCalculator() {
                       </TooltipTrigger>
                       <TooltipContent className="max-w-xs">
                         <p>
-                          Чистая маржинальность от цены (после налогов по выбранному режиму). Рекомендуемая цена — с сервера.
+                          Процент от полной себестоимости (закуп + прочие расходы на шт.): целевая чистая прибыль после
+                          налогов = (маржа ÷ 100) × себестоимость. Рекомендуемая цена рассчитывается на сервере.
                         </p>
                       </TooltipContent>
                     </Tooltip>
@@ -1186,7 +1187,7 @@ export function OzonSingleProductCalculator() {
                       </TooltipTrigger>
                       <TooltipContent className="max-w-xs">
                         <p>
-                          Чистая прибыль на 1 шт. после налогов (тот же смысл, что и для маржи %). Можно указать вместе с % — тогда в результатах будут обе расчётные цены.
+                          Фиксированная чистая прибыль на 1 шт. после налогов. Можно указать вместе с % от себестоимости — в результатах будут обе расчётные цены.
                         </p>
                       </TooltipContent>
                     </Tooltip>
@@ -1717,7 +1718,7 @@ export function OzonSingleProductCalculator() {
                           <td className="py-3 px-3 font-bold text-amber-800 dark:text-amber-300">
                             <div className="flex items-center gap-1.5">
                               <Target className="h-4 w-4" />
-                              Цена при маржинальности {rc.targetMargin}%
+                              Цена при {rc.targetMargin}% от себестоимости
                             </div>
                             <span className="text-xs font-normal text-muted-foreground">{taxLabel}</span>
                           </td>

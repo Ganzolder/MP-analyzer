@@ -153,7 +153,7 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
       }
       Object.assign(row, {
         "Объём, л": r.volumeLiters.toFixed(3),
-        "Маржинальность, %": r.targetMargin,
+        "План. маржа % от себестоимости": r.targetMargin,
         // FBO
         "FBO Цена, ₽": r.fbo.recommendedPrice.toFixed(2),
         "FBO Комиссия, %": r.fbo.commissionPct,
@@ -371,8 +371,12 @@ export function OzonBulkResults({ results, meta }: OzonBulkResultsProps) {
                 <th className="py-2 px-2 text-right cursor-pointer hover:bg-muted/40 whitespace-nowrap" onClick={() => handleSort("volume")}>
                   Объём{sortIndicator("volume")}
                 </th>
-                <th className="py-2 px-2 text-right cursor-pointer hover:bg-muted/40 whitespace-nowrap border-r" onClick={() => handleSort("margin")}>
-                  Маржа%{sortIndicator("margin")}
+                <th
+                  className="py-2 px-2 text-right cursor-pointer hover:bg-muted/40 whitespace-nowrap border-r"
+                  title="Плановая маржа: процент от полной себестоимости (закуп + прочие)"
+                  onClick={() => handleSort("margin")}
+                >
+                  План %{sortIndicator("margin")}
                 </th>
                 {/* FBO */}
                 <th className="py-2 px-2 text-right cursor-pointer hover:bg-muted/40 whitespace-nowrap text-blue-600" onClick={() => handleSort("fboPrice")}>

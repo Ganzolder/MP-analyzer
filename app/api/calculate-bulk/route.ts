@@ -306,7 +306,7 @@ export async function POST(request: NextRequest) {
       return result;
     }
 
-    // Формула расчёта цены с учётом налогового режима
+    // Формула цены при целевой доле чистой прибыли к цене (используется для рамок min/max % и clamp)
     // Маржинальность m = netProfit / price, где netProfit зависит от налогового режима
     const priceFormula = (
       pctRate: number,
@@ -331,7 +331,7 @@ export async function POST(request: NextRequest) {
       return { numerator: totalCost + fixedFees, denominator: oneMinusPct - m };
     };
 
-    // Алгебраический расчёт рекомендуемой цены по планируемой маржинальности
+    // Расчёт цены по доле чистой прибыли к цене (для рамок «не менее / не более %» к выручке)
     function computeRecommendedPrice(
       commission: typeof allCommissions[0] | null,
       fulfillment: "fbo" | "fbs" | "rfbs",
@@ -682,22 +682,36 @@ export async function POST(request: NextRequest) {
         }
 
         // Рассчитываем рекомендуемую цену для каждого типа отгрузки
+        // Планируемая маржа % трактуется как целевая чистая прибыль = (маржа%/100) * totalCost
+        const P_marginRow = (targetMargin / 100) * totalCost;
 
         // --- FBO ---
         // Сначала оцениваем цену, чтобы определить price band для логистики
         const fboFixedBase = resolvedLastMileFee; // Последняя миля FBO
-        const fboEstimate = computeRecommendedPrice(commission, "fbo", totalCost, targetMargin, fboFixedBase);
+        const fboEstimate = computeRecommendedPriceByNetProfit(commission, "fbo", totalCost, fboFixedBase, P_marginRow);
         const fboPriceBand = fboEstimate <= 300 ? "up_to_300" : "over_300";
         const fboShipping = calculateShipping("fbo", volumeLiters, fboPriceBand);
         // Пересчитываем с учётом логистики + последняя миля
-        const fboPrice = computeRecommendedPrice(commission, "fbo", totalCost, targetMargin, fboShipping + fboFixedBase);
+        const fboPrice = computeRecommendedPriceByNetProfit(
+          commission,
+          "fbo",
+          totalCost,
+          fboShipping + fboFixedBase,
+          P_marginRow
+        );
         // Проверяем, не изменился ли price band
         const fboFinalBand = fboPrice <= 300 ? "up_to_300" : "over_300";
         const fboFinalShipping = fboFinalBand !== fboPriceBand
           ? calculateShipping("fbo", volumeLiters, fboFinalBand)
           : fboShipping;
         const fboFinalPrice = fboFinalBand !== fboPriceBand
-          ? computeRecommendedPrice(commission, "fbo", totalCost, targetMargin, fboFinalShipping + fboFixedBase)
+          ? computeRecommendedPriceByNetProfit(
+              commission,
+              "fbo",
+              totalCost,
+              fboFinalShipping + fboFixedBase,
+              P_marginRow
+            )
           : fboPrice;
 
         let fboPriceByProfit: number | undefined;
@@ -724,16 +738,28 @@ export async function POST(request: NextRequest) {
 
         // --- FBS ---
         const fbsFixedBase = fbsDispatchFee + resolvedDeliveryToPickupPoint;
-        const fbsEstimate = computeRecommendedPrice(commission, "fbs", totalCost, targetMargin, fbsFixedBase);
+        const fbsEstimate = computeRecommendedPriceByNetProfit(commission, "fbs", totalCost, fbsFixedBase, P_marginRow);
         const fbsPriceBand = fbsEstimate <= 300 ? "up_to_300" : "over_300";
         const fbsShipping = calculateShipping("fbs", volumeLiters, fbsPriceBand);
-        const fbsPrice = computeRecommendedPrice(commission, "fbs", totalCost, targetMargin, fbsShipping + fbsFixedBase);
+        const fbsPrice = computeRecommendedPriceByNetProfit(
+          commission,
+          "fbs",
+          totalCost,
+          fbsShipping + fbsFixedBase,
+          P_marginRow
+        );
         const fbsFinalBand = fbsPrice <= 300 ? "up_to_300" : "over_300";
         const fbsFinalShipping = fbsFinalBand !== fbsPriceBand
           ? calculateShipping("fbs", volumeLiters, fbsFinalBand)
           : fbsShipping;
         const fbsFinalPrice = fbsFinalBand !== fbsPriceBand
-          ? computeRecommendedPrice(commission, "fbs", totalCost, targetMargin, fbsFinalShipping + fbsFixedBase)
+          ? computeRecommendedPriceByNetProfit(
+              commission,
+              "fbs",
+              totalCost,
+              fbsFinalShipping + fbsFixedBase,
+              P_marginRow
+            )
           : fbsPrice;
 
         let fbsPriceByProfit: number | undefined;
@@ -759,7 +785,7 @@ export async function POST(request: NextRequest) {
         };
 
         // --- RFBS ---
-        const rfbsPrice = computeRecommendedPrice(commission, "rfbs", totalCost, targetMargin, 0);
+        const rfbsPrice = computeRecommendedPriceByNetProfit(commission, "rfbs", totalCost, 0, P_marginRow);
         let rfbsPriceByProfit: number | undefined;
         if (hasGlobalProfitTarget) {
           rfbsPriceByProfit = computeRecommendedPriceByNetProfit(commission, "rfbs", totalCost, 0, globalProfitP);
