@@ -42,7 +42,6 @@ import { AIAnalysisButton } from "@/components/analysis/AIAnalysisButton";
 import { ExportSectionButton } from "@/components/report/ExportSectionButton";
 import { prepareAnalysisContext } from "@/lib/ai/context-preparer";
 import { useAnalysisStore } from "@/lib/store/analysis-store";
-import { getMockAnalysisResult } from "@/lib/mock/analysis-mock";
 import { formatDate, formatCurrency, cn } from "@/lib/utils";
 import {
   exportOverviewData,
@@ -69,25 +68,32 @@ export default function AnalysisPage() {
   const [originalData, setOriginalData] = useState<FrontendAnalysisResult | null>(null);
   
   useEffect(() => {
-    // Пытаемся получить данные из store или загружаем mock
-    if (storedResult && storedResult.id === id) {
-      console.log('[AnalysisPage] Данные из store:', {
-        dailyMetrics: storedResult.dailyMetrics?.length || 0,
-        profitTrends: storedResult.profitTrends?.length || 0,
-      });
-      setData(storedResult);
-      setOriginalData(storedResult); // Сохраняем исходные данные
-    } else {
-      // В реальности здесь будет API вызов
-      const mockData = getMockAnalysisResult(id);
-      console.log('[AnalysisPage] Используем mock данные:', {
-        dailyMetrics: mockData.dailyMetrics?.length || 0,
-        profitTrends: mockData.profitTrends?.length || 0,
-      });
-      setData(mockData);
-      setOriginalData(mockData); // Сохраняем исходные данные
-      setAnalysisResult(mockData);
+    let cancelled = false;
+
+    async function load() {
+      if (storedResult && storedResult.id === id) {
+        setData(storedResult);
+        setOriginalData(storedResult);
+        return;
+      }
+      try {
+        const res = await fetch(`/api/analysis/${id}`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`Ошибка ${res.status}`);
+        const json = await res.json();
+        const payload = (json?.data ?? json) as FrontendAnalysisResult;
+        if (cancelled) return;
+        setData(payload);
+        setOriginalData(payload);
+        setAnalysisResult(payload);
+      } catch (err) {
+        console.error("[AnalysisPage] fetch error:", err);
+      }
     }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
   }, [id, storedResult, setAnalysisResult]);
   
   
@@ -152,11 +158,20 @@ export default function AnalysisPage() {
           <h2 className="text-lg font-semibold mb-4">Ключевые метрики</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <MetricCard
+              title="Валовая по цене продавца"
+              value={(summary as any).grossBySellerPrice || 0}
+              format="currency"
+              icon={<DollarSign className="h-4 w-4" />}
+              subtitle="по доставленным единицам (без возвратов)"
+              delay={0}
+            />
+            <MetricCard
               title="Валовая выручка"
               value={summary.grossRevenue || 0}
               format="currency"
               icon={<DollarSign className="h-4 w-4" />}
-              delay={0}
+              subtitle="Выручка + Баллы + Программы партнёров"
+              delay={0.03}
             />
             <MetricCard
               title="Удержания Ozon"
@@ -168,7 +183,7 @@ export default function AnalysisPage() {
               title="Итого начислено"
               value={summary.netPayout || 0}
               format="currency"
-              subtitle={summary.pointsAmount > 0 ? `в т.ч. баллами: ${formatCurrency(summary.pointsAmount)}` : undefined}
+              subtitle="Валовая по цене продавца − Удержания Ozon"
               className={(summary.netPayout || 0) >= 0 ? "border-success/30" : "border-destructive/30"}
               delay={0.1}
             />
@@ -179,10 +194,17 @@ export default function AnalysisPage() {
               delay={0.15}
             />
             <MetricCard
+              title="Неполные заказы"
+              value={(summary as any).incompleteOrders || 0}
+              icon={<AlertTriangle className="h-4 w-4" />}
+              delay={0.16}
+              className={((summary as any).incompleteOrders || 0) > 0 ? "border-warning/30" : ""}
+            />
+            <MetricCard
               title="Отменено"
               value={(summary as any).cancelledOrders || 0}
               icon={<XCircle className="h-4 w-4" />}
-              delay={0.16}
+              delay={0.17}
             />
             <MetricCard
               title="% удержаний"
@@ -217,13 +239,15 @@ export default function AnalysisPage() {
             )}
           </div>
           
-          {/* Детализация выручки */}
-          {(summary.revenueAmount || summary.pointsAmount) && (
+          {/* Детализация валовой выручки */}
+          {(summary.revenueAmount || summary.pointsAmount || (summary as any).partnerProgramsAmount) && (
             <div className="mt-4 p-4 rounded-lg bg-muted/30 text-sm text-muted-foreground">
-              <span>Выручка: {formatCurrency(summary.revenueAmount || 0)}</span>
-              {summary.pointsAmount > 0 && (
-                <span className="ml-4">+ Баллы за скидки: {formatCurrency(summary.pointsAmount)}</span>
-              )}
+              <div className="font-medium text-foreground mb-2">Валовая выручка складывается из:</div>
+              <div className="flex flex-wrap gap-x-6 gap-y-1">
+                <span>Выручка: {formatCurrency(summary.revenueAmount || 0)}</span>
+                <span>Баллы за скидки: {formatCurrency(summary.pointsAmount || 0)}</span>
+                <span>Программы партнёров: {formatCurrency((summary as any).partnerProgramsAmount || 0)}</span>
+              </div>
             </div>
           )}
           
@@ -356,12 +380,14 @@ export default function AnalysisPage() {
                 analysisId={id}
                 summary={data.summary}
                 onRecalculate={async (excludedSkus) => {
-                  // Импортируем утилиту для пересчёта
-                  const { recalculateWithExclusions } = await import("@/lib/analysis/utils/recalculate-with-exclusions");
-                  // Используем исходные данные для пересчёта, а не уже отфильтрованные
-                  const sourceData = originalData || data;
-                  if (!sourceData) return;
-                  const recalculated = recalculateWithExclusions(sourceData, excludedSkus);
+                  void originalData;
+                  const res = await fetch(`/api/analysis/${id}/recalculate`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ excludedArticles: excludedSkus }),
+                  });
+                  if (!res.ok) return;
+                  const recalculated = (await res.json()) as FrontendAnalysisResult;
                   setData(recalculated);
                   setAnalysisResult(recalculated);
                 }}
@@ -507,11 +533,13 @@ export default function AnalysisPage() {
                       }))}
                       title="Товары без себестоимости"
                       onRecalculate={async (excludedSkus) => {
-                        const { recalculateWithExclusions } = await import("@/lib/analysis/utils/recalculate-with-exclusions");
-                        // Используем исходные данные для пересчёта, а не уже отфильтрованные
-                        const sourceData = originalData || data;
-                        if (!sourceData) return;
-                        const recalculated = recalculateWithExclusions(sourceData, excludedSkus);
+                        const res = await fetch(`/api/analysis/${id}/recalculate`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ excludedArticles: excludedSkus }),
+                        });
+                        if (!res.ok) return;
+                        const recalculated = (await res.json()) as FrontendAnalysisResult;
                         setData(recalculated);
                         setAnalysisResult(recalculated);
                       }}
@@ -653,6 +681,46 @@ export default function AnalysisPage() {
                 <CancellationChart data={cancellationReasons || []} title="Причины отмен" />
                 <CancellationChart data={returnReasons || []} title="Причины возвратов" />
               </div>
+
+              {Array.isArray((data as any).incompleteOrders) && (data as any).incompleteOrders.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-warning">
+                      <AlertTriangle className="h-4 w-4" />
+                      Неполные заказы (на границе периода)
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      Заказы, у которых в отчётном периоде отсутствуют некоторые начисления
+                      (например, только эквайринг или только логистика). Возможно, часть начислений
+                      ушла в соседний период.
+                    </p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b text-left text-muted-foreground">
+                            <th className="py-2 pr-4">ID заказа</th>
+                            <th className="py-2 pr-4">Дата</th>
+                            <th className="py-2 pr-4">Отсутствуют</th>
+                            <th className="py-2 pr-4 text-right">Сумма, ₽</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(data as any).incompleteOrders.slice(0, 200).map((o: any) => (
+                            <tr key={o.orderKey} className="border-b">
+                              <td className="py-2 pr-4 font-mono">{o.orderKey}</td>
+                              <td className="py-2 pr-4">{o.orderDate ? formatDate(o.orderDate) : "—"}</td>
+                              <td className="py-2 pr-4">{Array.isArray(o.missing) ? o.missing.join(", ") : "—"}</td>
+                              <td className="py-2 pr-4 text-right">{formatCurrency(o.totalAmount || 0)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
             </TabsContent>
           </Tabs>
         </motion.section>
