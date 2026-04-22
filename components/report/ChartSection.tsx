@@ -28,7 +28,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Calendar, Filter } from "lucide-react";
 import { formatCurrency, formatNumber } from "@/lib/utils";
 import type { ProductData, CancellationReason } from "@/lib/types/analysis";
-import type { DailyMetrics } from "@/lib/analysis/analyzer";
+import type { DailyMetrics } from "@/lib/analysis/types";
 import type { TimeGranularity, ProfitTrend } from "@/lib/utils/date-grouping";
 import {
   groupMetricsByGranularity,

@@ -1,0 +1,34 @@
+---
+description: Next.js API route conventions — request/response patterns, error handling
+globs:
+  - app/api/**
+alwaysApply: false
+---
+
+# app/api — API Routes
+
+## Паттерны ответов
+Единого контракта **нет** — два основных формата:
+- `{ success: true, data: ... }` / `{ success: false, error: "..." }` — калькулятор, CRUD тарифов
+- Плоский JSON результата — `/api/analyze`
+
+## Ошибки
+- Валидация → `400` с текстом на русском
+- Неожиданные → `try/catch` → `NextResponse.json({ error }, { status: 500 })`
+- `/api/analyze`: ошибка Prisma-сохранения логируется, но ответ клиенту всё равно 200
+
+## Запросы
+- Тяжёлые — `FormData` (file/files)
+- Калькуляторы — `request.json()`
+- Динамические сегменты — `params.id`
+
+## Связь с lib/
+- `/api/analyze` → `lib/analysis` (`analyzeReport`, парсеры)
+- `/api/calculate`, `/api/calculate-bulk` — логика расчёта **внутри route** + Prisma напрямую
+- Загрузки тарифов → `prisma.$executeRaw` + `createMany`
+- Экспорт (pdf/xlsx) — **заглушки**, отдают JSON
+
+## Нюансы
+- `export const dynamic = "force-dynamic"` и `maxDuration = 300` на тяжёлых эндпоинтах
+- `/api/analysis/[id]` при отсутствии записи отдаёт **mock** из `@/lib/mock/analysis-mock`
+- Auth/middleware **не подключены** (next-auth закомментирован)

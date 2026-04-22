@@ -1,59 +1,83 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getMockAnalysisResult } from "@/lib/mock/analysis-mock";
-import prisma from "@/lib/db/prisma";
+import { getIaoUserId } from "@/lib/auth/iao-user";
+import { deleteImport, loadImport } from "@/lib/supabase/import-repository";
+import {
+  buildChargeTypeBreakdown,
+  buildCostBreakdown,
+  buildDaily,
+  buildProductAggregates,
+  buildSchemeStats,
+  buildSummary,
+  type ConsolidationAnalytics,
+} from "@/lib/analysis/pipeline/metrics";
+import { toFrontendAnalysis } from "@/lib/analysis/pipeline/to-frontend";
+import type { ConsolidatedReport } from "@/lib/analysis/domain";
+import { logger } from "@/lib/utils/logger";
+
+export const dynamic = "force-dynamic";
 
 /**
  * GET /api/analysis/[id]
- * Получение результатов анализа
+ *
+ * Возвращает сохранённый импорт в формате `FrontendAnalysisResult`.
+ * Метрики пересчитываются из заказов/начислений — это гарантирует консистентность
+ * с текущей реализацией pipeline даже если снапшот в mp_imports.summary устарел.
  */
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+  const iaoUserId = getIaoUserId();
   try {
-    const { id } = params;
-    
-    if (!id) {
-      return NextResponse.json(
-        { error: "ID анализа обязателен" },
-        { status: 400 }
-      );
+    const imp = await loadImport(iaoUserId, params.id);
+    if (!imp) {
+      return NextResponse.json({ error: "Анализ не найден" }, { status: 404 });
     }
-    
-    // Пытаемся получить из БД
-    try {
-      const report = await prisma.report.findUnique({
-        where: { id },
-      });
-      
-      if (report && report.analysisResults) {
-        const analysisResults = JSON.parse(report.analysisResults);
-        return NextResponse.json({
-          success: true,
-          data: {
-            ...analysisResults,
-            id: report.id,
-            fileName: report.fileName,
-            createdAt: report.createdAt,
-          },
-        });
+
+    const products = buildProductAggregates(imp.orders);
+    const summary = buildSummary(imp.orders, imp.nonOrderCharges, imp.subscriptions, products);
+    const costBreakdown = buildCostBreakdown(imp.orders, imp.nonOrderCharges, imp.subscriptions);
+    const schemeStats = buildSchemeStats(imp.orders);
+    const chargeTypeBreakdown = buildChargeTypeBreakdown(imp.charges);
+    const daily = buildDaily(imp.orders);
+
+    const report: ConsolidatedReport = {
+      periodStart: imp.periodStart ?? new Date(),
+      periodEnd: imp.periodEnd ?? new Date(),
+      periodLabel: imp.periodLabel ?? "",
+      sourceFiles: imp.fileNames.map((name, i) => ({ fileName: name, size: imp.fileSizes[i] ?? 0 })),
+      orders: imp.orders,
+      nonOrderCharges: imp.nonOrderCharges,
+      subscriptions: imp.subscriptions,
+      charges: imp.charges,
+    };
+
+    const analytics: ConsolidationAnalytics = {
+      summary,
+      costBreakdown,
+      schemeStats,
+      chargeTypeBreakdown,
+      daily,
+      productAggregates: products,
+    };
+
+    const frontend = toFrontendAnalysis(
+      { report, analytics, costMatch: { matchedArticles: new Set(), unmatchedArticles: new Set() } },
+      {
+        id: imp.id,
+        fileName: imp.fileNames.join(", "),
+        fileSize: imp.fileSizes.reduce((s, v) => s + v, 0),
       }
-    } catch (dbError: any) {
-      console.error("Ошибка при получении из БД:", dbError.message);
-      // Продолжаем - попробуем mock данные
-    }
-    
-    // Fallback на mock данные, если не найдено в БД
-    const mockResult = getMockAnalysisResult(id);
-    
+    );
+
     return NextResponse.json({
       success: true,
-      data: mockResult,
+      data: {
+        ...frontend,
+        createdAt: imp.createdAt,
+      },
     });
-  } catch (error) {
-    console.error("Get analysis error:", error);
+  } catch (err: any) {
+    logger.error("API", "Ошибка при получении анализа", err);
     return NextResponse.json(
-      { error: "Ошибка при получении анализа" },
+      { error: "Ошибка при получении анализа", message: err?.message },
       { status: 500 }
     );
   }
@@ -61,33 +85,22 @@ export async function GET(
 
 /**
  * DELETE /api/analysis/[id]
- * Удаление анализа
  */
 export async function DELETE(
-  request: NextRequest,
+  _req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const iaoUserId = getIaoUserId();
   try {
-    const { id } = params;
-    
-    // Удаляем из БД
-    try {
-      await prisma.report.delete({
-        where: { id },
-      });
-    } catch (dbError: any) {
-      // Если записи нет в БД, это не критично
-      console.log("Запись не найдена в БД или уже удалена:", dbError.message);
+    const removed = await deleteImport(iaoUserId, params.id);
+    if (!removed) {
+      return NextResponse.json({ error: "Анализ не найден" }, { status: 404 });
     }
-    
-    return NextResponse.json({
-      success: true,
-      message: "Анализ удалён",
-    });
-  } catch (error) {
-    console.error("Delete analysis error:", error);
+    return NextResponse.json({ success: true, message: "Анализ удалён" });
+  } catch (err: any) {
+    logger.error("API", "Ошибка при удалении анализа", err);
     return NextResponse.json(
-      { error: "Ошибка при удалении анализа" },
+      { error: "Ошибка при удалении анализа", message: err?.message },
       { status: 500 }
     );
   }

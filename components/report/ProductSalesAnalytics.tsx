@@ -26,6 +26,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import { Search, Calendar, ChevronRight } from "lucide-react";
 import type { AggregatedOrder } from "@/lib/analysis/types";
+import { getProductAggregateKey } from "@/lib/analysis/product-key";
+import { getOrderNetProfitForDisplay } from "@/lib/analysis/order-net-profit";
+import { round } from "@/lib/analysis/data-utils";
 import type { ProductData } from "@/lib/types/analysis";
 import type { TimeGranularity } from "@/lib/utils/date-grouping";
 import { AIAnalysisButton } from "@/components/analysis/AIAnalysisButton";
@@ -112,17 +115,14 @@ export function ProductSalesAnalytics({
   const productOrders = useMemo(() => {
     if (!product) return [];
     
-    // Используем SKU или артикул для поиска
-    const productKey = (product.sku || product.article || "").trim();
+    const productKey = getProductAggregateKey({
+      sku: product.sku,
+      article: product.article,
+    });
     if (!productKey) return [];
-    
+
     return orders
-      .filter(order => {
-        const orderSku = (order.sku || "").trim();
-        const orderArticle = (order.article || "").trim();
-        // Сравниваем по SKU или артикулу
-        return orderSku === productKey || orderArticle === productKey;
-      })
+      .filter((order) => getProductAggregateKey(order) === productKey)
       .map(order => {
         const rawDate = order.chargeDate;
         const chargeDate = rawDate instanceof Date 
@@ -188,15 +188,12 @@ export function ProductSalesAnalytics({
       dayData.ordersCount += 1;
       dayData.quantity += order.quantity || 0;
       dayData.orders!.push(order);
-      
-      // Себестоимость учитываем только если есть выручка (иначе это возвраты/отмена/прочие случаи)
-      if ((order.grossRevenue || 0) > 0 && order.totalCost !== undefined && order.totalCost > 0) {
+
+      const hasRevenue = (order.grossRevenue || 0) > 0;
+      if (hasRevenue && order.totalCost !== undefined && order.totalCost > 0) {
         dayData.totalCost += order.totalCost;
-        dayData.netProfit += (order.totalAmountRub - order.totalCost);
-      } else {
-        // Если выручки нет, себестоимость не учитываем, чистая прибыль = начислено
-        dayData.netProfit += order.totalAmountRub || 0;
       }
+      dayData.netProfit += getOrderNetProfitForDisplay(order);
 
       // Средняя цена (выручка / количество)
       if (order.quantity > 0 && order.grossRevenue > 0) {
@@ -231,6 +228,39 @@ export function ProductSalesAnalytics({
       a.dateObj.getTime() - b.dateObj.getTime()
     );
   }, [productOrders, granularity]);
+
+  /** Сводка сверху = сумма по строкам таблицы детализации (те же периоды, что dailyData). Поиск filteredData не влияет. */
+  const summaryFromDailyTotals = useMemo(() => {
+    if (dailyData.length === 0) {
+      return {
+        totalRevenue: 0,
+        totalNetAmount: 0,
+        totalNetProfit: 0,
+        profitMarginPercent: undefined as number | undefined,
+      };
+    }
+    let revenueSum = 0;
+    let netAmountSum = 0;
+    let netProfitSum = 0;
+    for (const d of dailyData) {
+      revenueSum += d.revenue;
+      netAmountSum += d.netAmount;
+      netProfitSum += d.netProfit;
+    }
+    const totalNetProfit = round(netProfitSum);
+    const totalRevenue = round(revenueSum);
+    const totalNetAmount = round(netAmountSum);
+    const profitMarginPercent =
+      totalRevenue > 0
+        ? round((totalNetProfit / totalRevenue) * 100, 1)
+        : undefined;
+    return {
+      totalRevenue,
+      totalNetAmount,
+      totalNetProfit,
+      profitMarginPercent,
+    };
+  }, [dailyData]);
 
   // Фильтруем данные по поисковому запросу
   const filteredData = useMemo(() => {
@@ -344,7 +374,7 @@ export function ProductSalesAnalytics({
             </div>
 
             {/* Сводка */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
               <div className="p-3 rounded-lg bg-muted/30">
                 <div className="text-xs text-muted-foreground">Всего заказов</div>
                 <div className="text-lg font-semibold">{productOrders.length}</div>
@@ -352,27 +382,40 @@ export function ProductSalesAnalytics({
               <div className="p-3 rounded-lg bg-muted/30">
                 <div className="text-xs text-muted-foreground">Выручка</div>
                 <div className="text-lg font-semibold text-success">
-                  {formatCurrency((product as any).revenue || 0)}
+                  {formatCurrency(summaryFromDailyTotals.totalRevenue)}
                 </div>
               </div>
               <div className="p-3 rounded-lg bg-muted/30">
                 <div className="text-xs text-muted-foreground">Начислено</div>
                 <div className={cn(
                   "text-lg font-semibold",
-                  ((product as any).profit || 0) >= 0 ? "text-success" : "text-destructive"
+                  summaryFromDailyTotals.totalNetAmount >= 0 ? "text-success" : "text-destructive"
                 )}>
-                  {formatCurrency((product as any).profit || 0)}
+                  {formatCurrency(summaryFromDailyTotals.totalNetAmount)}
+                </div>
+              </div>
+              <div className="p-3 rounded-lg bg-muted/30">
+                <div className="text-xs text-muted-foreground">Чистая прибыль</div>
+                <div
+                  className={cn(
+                    "text-lg font-semibold",
+                    summaryFromDailyTotals.totalNetProfit >= 0 ? "text-success" : "text-destructive"
+                  )}
+                >
+                  {formatCurrency(summaryFromDailyTotals.totalNetProfit)}
                 </div>
               </div>
               <div className="p-3 rounded-lg bg-muted/30">
                 <div className="text-xs text-muted-foreground">Рентабельность</div>
                 <div className={cn(
                   "text-lg font-semibold",
-                  (product as any).profitMargin !== undefined
-                    ? ((product as any).profitMargin >= 15 ? "text-success" : (product as any).profitMargin < 0 ? "text-destructive" : "")
+                  summaryFromDailyTotals.profitMarginPercent !== undefined
+                    ? (summaryFromDailyTotals.profitMarginPercent >= 15 ? "text-success" : summaryFromDailyTotals.profitMarginPercent < 0 ? "text-destructive" : "")
                     : "text-muted-foreground"
                 )}>
-                  {(product as any).profitMargin !== undefined ? `${(product as any).profitMargin.toFixed(1)}%` : "-"}
+                  {summaryFromDailyTotals.profitMarginPercent !== undefined
+                    ? `${summaryFromDailyTotals.profitMarginPercent.toFixed(1)}%`
+                    : "-"}
                 </div>
               </div>
             </div>
@@ -488,7 +531,7 @@ export function ProductSalesAnalytics({
                     name="Начислено"
                     fill="hsl(263, 70%, 58%)"
                   />
-                  {filteredData.some(d => d.totalCost > 0) && (
+                  {dailyData.length > 0 && (
                     <Bar
                       yAxisId="left"
                       dataKey="netProfit"
@@ -603,7 +646,7 @@ export function ProductSalesAnalytics({
                               "py-2 px-2 text-right",
                               period.netProfit >= 0 ? "text-success" : "text-destructive"
                             )}>
-                              {period.totalCost > 0 ? formatCurrency(period.netProfit) : "-"}
+                              {formatCurrency(period.netProfit)}
                             </td>
                             <td className={cn(
                               "py-2 px-2 text-right",
@@ -658,11 +701,11 @@ export function ProductSalesAnalytics({
                                             })
                                             .slice(0, 200)
                                             .map((o) => {
-                                              const hasRevenue = (o.grossRevenue || 0) > 0;
-                                              const hasCost = hasRevenue && !!o.totalCost && o.totalCost > 0;
-                                              const netProfit = hasCost
-                                                ? (o.totalAmountRub || 0) - (o.totalCost || 0)
-                                                : (o.totalAmountRub || 0);
+                                              const netProfit = getOrderNetProfitForDisplay(o);
+                                              const hasCost =
+                                                (o.grossRevenue || 0) > 0 &&
+                                                !!o.totalCost &&
+                                                o.totalCost > 0;
                                               const dateKey = o.chargeDate instanceof Date ? o.chargeDate.toISOString() : (o.chargeDate ? String(o.chargeDate) : o.orderNumber || "");
                                               return (
                                                 <tr key={`${o.orderNumber}-${dateKey}`} className="border-b last:border-0 hover:bg-muted/20">

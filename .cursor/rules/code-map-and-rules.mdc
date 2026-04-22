@@ -1,0 +1,11 @@
+---
+description: Code map and Cursor rules — keep in sync after any structural change
+alwaysApply: true
+---
+
+# Code map and rules after changes
+
+- **After any edit** that changes **paths, new files/folders**, or **module boundaries** already reflected in the map or `.cursor/rules/` — **immediately update** the relevant references and descriptions (map and rules must not lie about the repo).
+- **After new functionality** or **major refactoring**: update the **map section** (what lives where, with **path links**); for stable important structures — **add or update** a narrow rule in `.cursor/rules/` (`.mdc` per layer/module) with key paths and responsibility scope.
+- Map location and format — see **Documentation** rule (`documentation-structure.mdc`).
+- On file rename/move — **immediately** fix the map and affected rules.

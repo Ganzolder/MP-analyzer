@@ -1,0 +1,11 @@
+---
+description: Self-correction on errors — diagnostics, attempt limit, preflight checks
+alwaysApply: true
+---
+
+# Errors and self-correction
+
+- **Command / build / lint error**: **read the output** first, diagnose the cause, fix — don't blindly retry the same command.
+- **Limit**: max **3 attempts** on the same error. After the third — report the diagnosis to the user and suggest options.
+- **Preflight**: before creating a file — check if it exists; before committing — `git status`; before installing deps — verify the package manager config exists.
+- **Rollback**: if a change broke the build and a quick fix isn't obvious — revert the change and report.

@@ -1,0 +1,17 @@
+---
+description: Core agent behavior — rule priority, brevity, tokens, subagents, MCP
+alwaysApply: true
+---
+
+# Agent core
+
+- **Priority**: this is the project's base ruleset. Other rules and explicit user instructions **in the current chat** take precedence; on conflict — ask the user if context is insufficient.
+- **Language**: respond in the user's language (default: **Russian**). Documentation and TZ — in Russian unless stated otherwise.
+- Be **concise**: essence, steps, result. No filler intros or redundant recaps.
+- **Token economy** is a conscious goal: don't echo large code blocks unless asked; prefer **path references** and short excerpts; for code search prefer **repo search + fragments**, not reading whole files.
+- **Response format**: don't repeat the user's question; don't summarize what was just said; prefer code references (`startLine:endLine:path`) over full blocks; diff description over full file copy.
+- **Break large tasks** into subtasks with order and dependencies. Don't mix multiple big goals in one pass without an explicit request.
+- **Subagents / Task**: for broad repo exploration, independent subtasks, and parallel code search — use **Task subagent** to avoid bloating the main conversation context.
+- **MCP**: don't call MCP tools without clear benefit for the current step; don't assume servers exist if the user disabled them.
+- **Chat context**: if the conversation is long and context is overloaded — suggest checkpointing `STATUS.md` and starting a new chat, briefly explaining why.
+- **New chat bootstrap**: at the start of a new chat, read `STATUS.md` (if exists) and `docs/PROJECT.md` (if exists) to understand current state and project context before proceeding. If `docs/PROJECT.md` **does not exist** — read and execute `.cursor/rules/project-bootstrap.mdc` for first-time project setup.

@@ -1,0 +1,30 @@
+---
+description: Unit economics calculator — product file parsing, commissions, shipping costs
+globs:
+  - lib/calculator/**
+  - lib/types/calculator.ts
+  - lib/types/commissions.ts
+  - lib/types/shipping.ts
+alwaysApply: false
+---
+
+# lib/calculator — калькулятор юнит-экономики Ozon
+
+## Граница
+Парсинг Excel-файла товаров, поиск комиссий по категории из БД, расчёт стоимости доставки. Без UI-логики.
+
+## Ключевые пути
+- `parsers/ozon-file-parser.ts` — `parseOzonFile(file)` → `ParsedFileResult`; xlsx → `OzonProductData[]`; лимит 10 000 строк
+- `services/category-commission-service.ts` — `findCategoryCommission()`, `getCategoryCommissionPercent()`; матрица FBO/FBS/rFBS/FBO Fresh по ценовым порогам
+- `services/shipping-calculator.ts` — `findShippingTariff()`, `calculateShippingCost()`, `getShippingCost()`
+
+## Контракты
+- Типы из `@/lib/types/calculator`, `@/lib/types/commissions`, `@/lib/types/shipping`
+- Сервисы используют `@/lib/db/prisma` — **только чтение** (`findMany` + `take: 1`)
+- Парсер к БД не обращается
+- Результат Prisma кастится `as any as DomainType`
+
+## Паттерны
+- Функции (без классов); `null` при отсутствии данных
+- Ошибки парсера — массив `errors` в `ParsedFileResult` + `try/catch` на верхнем уровне
+- Файлы kebab-case, алиас `@/`

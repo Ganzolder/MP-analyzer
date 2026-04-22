@@ -1,0 +1,13 @@
+---
+description: Legacy project guard — minimal intervention, no unsolicited refactoring
+alwaysApply: true
+---
+
+# Legacy guard
+
+- **Minimal change**: only modify what was explicitly requested. Don't "improve" surrounding code, rename variables, or restructure files unless asked.
+- **No unsolicited dependency updates**: don't bump versions, replace libraries, or change build configs without explicit request.
+- **Respect existing patterns**: even if the codebase uses older patterns — follow them for consistency. Suggest improvements separately, don't silently rewrite.
+- **Test before and after**: if the project has tests — run them before and after changes to catch regressions. Report results.
+- **Unknown area**: if touching unfamiliar code — read the surrounding module first (imports, callers, tests) before editing. Don't guess behavior.
+- **Project context**: at the start of a new chat, read **`docs/PROJECT.md`** (if exists) for stack, structure, and conventions before making changes.

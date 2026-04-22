@@ -1,0 +1,12 @@
+---
+description: Documentation in docs/ — map, thematic folders, no monoliths
+globs: ["docs/**", "*.md"]
+---
+
+# Documentation (`docs/`)
+
+- Keep documentation in **`docs/`**. Large topics — **separate files** in thematic subfolders (e.g. `docs/architecture/`, `docs/api/`, `docs/deployment/`).
+- **No monoliths**: split into logical files and cross-link.
+- Maintain a **map** at `docs/` root — a file listing sections and links (name by project choice: `INDEX.md`, `README.md`, or `map.md`).
+- If **`docs/skills-index.md`** (Cursor skills registry) exists — include a **link** in the docs map.
+- New file in `docs/` — **update the map**. Path/module/structure changes — see **Code map and rules** (`code-map-and-rules.mdc`).

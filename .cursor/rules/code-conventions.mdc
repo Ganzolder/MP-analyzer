@@ -1,0 +1,12 @@
+---
+description: Code quality — cleanliness, naming, comments, DRY
+alwaysApply: true
+---
+
+# Code conventions
+
+- **Clean code**: no commented-out code, unused imports, dead variables. Remove during refactoring.
+- **Naming**: consistent, project-style. Names by meaning, not by type (`getUserOrders`, not `data2`).
+- **Comments**: only non-obvious logic, trade-offs, contracts. No narration like `// increment counter`.
+- **DRY**: a block repeated ≥ 3 times — extract to a function/module unless it hurts readability.
+- **Stack-specific**: if `.cursor/skills/` has stack conventions — follow them (see `skills-stack.mdc`).

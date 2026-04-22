@@ -1,0 +1,13 @@
+---
+description: TZ workflow — specs in tz/, task files, checklists, STATUS, chat continuity
+alwaysApply: true
+---
+
+# Technical specification (`tz/`)
+
+- Before implementation — write a unified spec in **`tz/`**, named in transliterated topic: **`TZ_<topic>.md`** (Latin, underscores).
+- Until the TZ is **approved** by the user — no mass implementation; editing `TZ_*.md` itself is fine.
+- After approval create **task files** from TZ items: **`TASK_<short>.md`** (transliterated, unique per TZ); may live in **`tz/tasks/`** — then add **direct links** in `TZ_*.md` and `STATUS.md`.
+- Every task file must have a **progress checklist** (`- [ ]` / `- [x]`).
+- **Multi-stage work**: maintain **`STATUS.md`** (or `TZ_<topic>_STATUS.md`) in `tz/` — current stage, last completed step, links to `TZ_*.md`, `TASK_*.md` and checklists. Update as you go.
+- **New chat**: start by reading `STATUS.md` and linked `TZ_*.md` / `TASK_*.md` — **continue from the current stage**, briefly tell the user where you're picking up.

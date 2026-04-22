@@ -1,0 +1,41 @@
+---
+description: React component conventions — styling, state, imports
+globs:
+  - components/**
+  - app/**/page.tsx
+  - app/layout.tsx
+alwaysApply: false
+---
+
+# components — React-компоненты
+
+## Структура
+- `ui/` — shadcn/ui базовые (Button, Card, Dialog, …)
+- `upload/` — загрузка файлов (drag-and-drop через `react-dropzone`)
+- `report/` — отчёт: MetricCard, таблицы, графики, экспорт
+- `calculator/` — OzonCalculator, OzonProductsTable, OzonBulkResults
+- `analysis/` — AI-кнопки, прогресс
+- `layout/` — Header с навигацией
+- `settings/` — BusinessSettingsForm
+
+## Паттерны
+- `"use client"` в начале файла для интерактивных компонентов
+- `export function ComponentName` + интерфейс `ComponentNameProps`
+- Вложенные/локальные компоненты — в том же файле
+- Иконки: `lucide-react`; анимации: `framer-motion` (`motion.div`)
+
+## Стили
+- Tailwind utility classes + `cn()` из `@/lib/utils`
+- Токены shadcn (`muted-foreground`, `destructive`, `primary`)
+- Есть именованные классы (`metric-card`, `glass-card`, `dropzone`) — смесь utility-first и глобальных стилей
+- Импорт UI-примитивов: `@/components/ui/*`
+
+## State
+- Zustand точечно: `useCalculatorStore`, `useAnalysisStore` и др. из `@/lib/store/`
+- Остальное — `useState` / props от родителя
+- Уведомления: `useToast` из `@/components/ui/use-toast`
+
+## Импорты
+- Алиас `@/` для `lib/` и `components/`
+- Внутри фичи — относительные `./SiblingComponent`
+- Доменные типы: `@/lib/types/...`

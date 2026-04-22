@@ -3,6 +3,7 @@
  */
 
 import type { FrontendAnalysisResult } from "@/lib/types/analysis";
+import { getProductAggregateKey } from "@/lib/analysis/product-key";
 
 export type AnalysisType = "overview" | "costs" | "products" | "orders" | "cost-reports" | "problems";
 
@@ -335,14 +336,12 @@ export function prepareSingleProductContext(
   orders: any[],
   summary?: any // Не используется, оставлен для совместимости
 ): Record<string, any> {
-  // Фильтруем заказы по товару
-  const productKey = (product.sku || product.article || "").trim();
+  const productKey = getProductAggregateKey({
+    sku: product.sku,
+    article: product.article,
+  });
   const productOrders = orders
-    .filter(order => {
-      const orderSku = (order.sku || "").trim();
-      const orderArticle = (order.article || "").trim();
-      return orderSku === productKey || orderArticle === productKey;
-    })
+    .filter((order) => getProductAggregateKey(order) === productKey && productKey !== null)
     .map(order => ({
       orderNumber: order.orderNumber,
       orderDate: order.orderDate,

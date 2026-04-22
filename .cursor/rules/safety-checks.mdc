@@ -1,0 +1,11 @@
+---
+description: Safety — no hardcoded secrets, destructive ops confirmation, dependencies, .env
+alwaysApply: true
+---
+
+# Safety and checks
+
+- **Secrets**: never hardcode keys, tokens, passwords. Use environment variables.
+- **Destructive ops**: `rm -rf`, `DROP`, `TRUNCATE`, `reset --hard` — only with explicit user confirmation.
+- **Dependencies**: don't invent package versions; use the package manager for the current version. Don't manually edit lockfiles.
+- **`.env`**: if needed — create `.env.example` with placeholders, not a real `.env`.

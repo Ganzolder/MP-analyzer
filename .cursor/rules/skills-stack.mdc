@@ -1,0 +1,15 @@
+---
+description: Skills — read before stack decisions, propose new, write only after confirmation
+alwaysApply: true
+---
+
+# Skills for stack and project
+
+- If **`.cursor/skills/`** exists — **check the relevant SKILL.md** before making stack/toolchain/practice conclusions. Follow it unless it conflicts with TZ or explicit user instructions.
+- Skills are **not auto-fetched**. No matching skill — **propose** adding one (topic + path) rather than inventing conventions, if the same instruction **repeats** in session, there's a **long step-by-step** procedure, or a **new stack/tool** lacks its `SKILL.md`.
+
+## Writing to disk
+
+- **Create/modify** `SKILL.md` — **only after explicit user confirmation** ("yes", "create skill", "add", etc.). Without confirmation — text/plan in chat only.
+- After confirmation: create or update files at **`.cursor/skills/<topic>/SKILL.md`**.
+- Maintain index at **`docs/skills-index.md`** (topic, path, "when to read"). On first creation — **create** the file and **add a link** in the `docs/` map (see `documentation-structure.mdc`).

@@ -15,6 +15,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/use-toast";
 import { useExcludedProductsStore } from "@/lib/store/excluded-products-store";
+import { getProductAggregateKey } from "@/lib/analysis/product-key";
+
+/** Стабильный ключ строки товара (совпадает с группировкой в ProductMetricsCalculator) */
+function getProductRowKey(p: ProductData): string {
+  return getProductAggregateKey({ sku: p.sku, article: p.article }) || p.sku || "";
+}
 
 interface AllProductsTableProps {
   products: ProductData[];
@@ -107,7 +113,7 @@ export function AllProductsTable({ products, orders = [], analysisId, summary, o
     }
 
     // Исключаем товары, которые уже были исключены из расчёта
-    filtered = filtered.filter((p) => !excludedSkus.has(p.sku));
+    filtered = filtered.filter((p) => !excludedSkus.has(getProductRowKey(p)));
 
     return filtered;
   }, [products, searchQuery, minRevenue, minProfit, minNetProfit, minProfitMargin, minReturnRate, showOnlyUnprofitable, excludedSkus]);
@@ -301,7 +307,7 @@ export function AllProductsTable({ products, orders = [], analysisId, summary, o
     if (selectedSkus.size === filteredProducts.length) {
       setSelectedSkus(new Set());
     } else {
-      setSelectedSkus(new Set(filteredProducts.map(p => p.sku)));
+      setSelectedSkus(new Set(filteredProducts.map(getProductRowKey)));
     }
   };
 
@@ -506,7 +512,7 @@ export function AllProductsTable({ products, orders = [], analysisId, summary, o
               {/* Секция с исключёнными товарами */}
               {excludedSkus.size > 0 && (() => {
                 // Получаем информацию об исключённых товарах из исходных данных
-                const excludedProducts = (products || []).filter(p => excludedSkus.has(p.sku));
+                const excludedProducts = (products || []).filter(p => excludedSkus.has(getProductRowKey(p)));
                 
                 return (
                   <div className="p-4 bg-warning/10 border border-warning/30 rounded-lg space-y-4">
@@ -565,7 +571,7 @@ export function AllProductsTable({ products, orders = [], analysisId, summary, o
                             checked={excludedProducts.length > 0 && selectedToReturn.size === excludedProducts.length}
                             onCheckedChange={(checked) => {
                               if (checked) {
-                                setSelectedToReturn(new Set(excludedProducts.map(p => p.sku)));
+                                setSelectedToReturn(new Set(excludedProducts.map(getProductRowKey)));
                               } else {
                                 setSelectedToReturn(new Set());
                               }
@@ -685,7 +691,7 @@ export function AllProductsTable({ products, orders = [], analysisId, summary, o
                                   checked={excludedProducts.length > 0 && selectedToReturn.size === excludedProducts.length}
                                   onCheckedChange={(checked) => {
                                     if (checked) {
-                                      setSelectedToReturn(new Set(excludedProducts.map(p => p.sku)));
+                                      setSelectedToReturn(new Set(excludedProducts.map(getProductRowKey)));
                                     } else {
                                       setSelectedToReturn(new Set());
                                     }
@@ -700,10 +706,11 @@ export function AllProductsTable({ products, orders = [], analysisId, summary, o
                           </thead>
                           <tbody>
                             {excludedProducts.map((product) => {
-                              const isSelected = selectedToReturn.has(product.sku);
+                              const rowKey = getProductRowKey(product);
+                              const isSelected = selectedToReturn.has(rowKey);
                               return (
                                 <tr 
-                                  key={product.sku} 
+                                  key={rowKey} 
                                   className={cn(
                                     "border-b hover:bg-muted/30",
                                     isSelected && "bg-primary/5"
@@ -715,9 +722,9 @@ export function AllProductsTable({ products, orders = [], analysisId, summary, o
                                       onCheckedChange={(checked) => {
                                         const newSelected = new Set(selectedToReturn);
                                         if (checked) {
-                                          newSelected.add(product.sku);
+                                          newSelected.add(rowKey);
                                         } else {
-                                          newSelected.delete(product.sku);
+                                          newSelected.delete(rowKey);
                                         }
                                         setSelectedToReturn(newSelected);
                                       }}
@@ -893,10 +900,11 @@ export function AllProductsTable({ products, orders = [], analysisId, summary, o
                     </thead>
                     <tbody>
                       {paginatedProducts.map((product, index) => {
-                        const isSelected = selectedSkus.has(product.sku);
+                        const rowKey = getProductRowKey(product);
+                        const isSelected = selectedSkus.has(rowKey);
                         return (
                           <tr 
-                            key={index} 
+                            key={rowKey || String(index)} 
                             className={cn(
                               "border-b last:border-0 hover:bg-muted/30",
                               isSelected && "bg-primary/5"
@@ -919,7 +927,7 @@ export function AllProductsTable({ products, orders = [], analysisId, summary, o
                             <td className="py-3 px-2">
                               <Checkbox
                                 checked={isSelected}
-                                onCheckedChange={() => handleToggleProduct(product.sku)}
+                                onCheckedChange={() => handleToggleProduct(rowKey)}
                               />
                             </td>
                             <td className="py-3 px-2 font-mono text-xs">{product.sku || "-"}</td>

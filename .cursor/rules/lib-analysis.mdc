@@ -1,0 +1,33 @@
+---
+description: Core analysis engine — parsers, aggregators, calculators, analyzers
+globs:
+  - lib/analysis/**
+alwaysApply: false
+---
+
+# lib/analysis — ядро анализа отчётов Ozon
+
+## Граница
+Пайплайн: Excel (xls/xlsx) → `ChargeRow[]` → агрегация по заказам → калькуляторы метрик → проблемы + рекомендации. **Не** зависит от API-слоя и UI.
+
+## Ключевые пути
+- `analyzer.ts` — оркестратор `OzonReportAnalyzer`, `analyzeReport()`, форматтеры (`formatCurrency`, `formatPercent`, `formatDateRu`)
+- `index.ts` — публичный API модуля: реэкспорт из `analyzer`, `types`, `converter`, `merge-results`
+- `types.ts` — центральные типы: `ChargeRow`, `AggregatedOrder`, `OrderStatus`, `AnalysisResult`
+- `parsers/file-parser.ts` — `FileParser`, чтение Excel, нормализация кодировок
+- `parsers/xlsx-raw-parser.ts` — кастомный парсер XLSX через `sax`/`yauzl`
+- `aggregators/order-aggregator.ts` — группировка по заказу, мульти-SKU → несколько `AggregatedOrder`
+- `calculators/` — `SummaryCalculator`, `ProductMetricsCalculator`, `CostCalculator`, `DailyMetricsCalculator` и др.
+- `analyzers/` — `ProblemIdentifier`, `RecommendationGenerator`
+- `encoding.ts` — KOI-7, UTF-16LE, win1251, jschardet
+
+## Паттерны
+- Классы PascalCase, методы/поля camelCase
+- `RawRow` — ключи на русском (как в выгрузке Ozon)
+- Ошибки парсинга: `throw` при неподдерживаемом формате; `try/catch` + fallback в декодерах
+- Зависимости: `@/lib/utils/logger`, внутренние подмодули; **никаких** Prisma/DB вызовов
+- Себестоимость — опционально через `Map<sku, cost>` + `CostCalculator`
+
+## Нюансы
+- Мульти-товарные заказы дают несколько `AggregatedOrder` на один `orderNumber`
+- Кодировочные «битые» подстроки типов начислений дублируются для надёжного матчинга

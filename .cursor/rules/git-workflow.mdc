@@ -1,0 +1,12 @@
+---
+description: Git — commit format, branches, safety, secrets
+alwaysApply: true
+---
+
+# Git workflow
+
+- **Commits**: `type(scope): description` (conventional commits). Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`. Description — **in the user's language** (default Russian).
+- **Without explicit request** — don't commit, push, or create branches.
+- **Never** without explicit ask: `--force`, `--no-verify`, `reset --hard`, `rebase -i`.
+- **Secrets**: don't commit `.env`, keys, tokens, passwords. If spotted in staging — warn the user.
+- **Branches**: if the user hasn't set a convention — ask before first branching.
