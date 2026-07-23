@@ -86,6 +86,10 @@ export function exportOverviewData(
       data: [
         { Параметр: "Выручка", Значение: formatCurrencyForExport(summary.grossRevenue) },
         { Параметр: "К выплате", Значение: formatCurrencyForExport(summary.netPayout) },
+        {
+          Параметр: "Проданных единиц",
+          Значение: (summary as { soldUnits?: number }).soldUnits ?? 0,
+        },
         { Параметр: "Всего заказов", Значение: summary.totalOrders || 0 },
         { Параметр: "Завершенных", Значение: summary.completedOrders || 0 },
         { Параметр: "Возвратов", Значение: summary.returnedOrders || 0 },
@@ -244,9 +248,13 @@ export function exportOrdersData(
     status: string;
     date: Date | null;
     chargeDate: Date | null;
-    grossRevenue: number;
-    netAmount: number;
+    grossBySellerPrice: number;
+    grossInflow: number;
+    ozonFeesTotal: number;
+    totalExpenses: number;
     totalCost: number;
+    /** Легаси: к выплате */
+    totalAmountRub: number;
     quantity: number;
     productNames: Set<string>;
     netProfit?: number;
@@ -269,8 +277,11 @@ export function exportOrdersData(
         status: incomingStatus,
         date: orderDate,
         chargeDate,
-        grossRevenue: 0,
-        netAmount: 0,
+        grossBySellerPrice: 0,
+        grossInflow: 0,
+        ozonFeesTotal: 0,
+        totalExpenses: 0,
+        totalAmountRub: 0,
         totalCost: 0,
         quantity: 0,
         productNames: new Set<string>(),
@@ -292,8 +303,10 @@ export function exportOrdersData(
       if (!g.chargeDate || chargeDate.getTime() > g.chargeDate.getTime()) g.chargeDate = chargeDate;
     }
 
-    g.grossRevenue += order.grossRevenue || 0;
-    g.netAmount += order.totalAmountRub || 0;
+    g.grossBySellerPrice += order.grossBySellerPrice ?? 0;
+    g.grossInflow += order.grossInflow ?? order.grossRevenue ?? 0;
+    g.ozonFeesTotal += order.ozonFeesTotal ?? order.totalFees ?? 0;
+    g.totalAmountRub += order.totalAmountRub || 0;
     g.totalCost += order.totalCost || 0;
     g.quantity += order.quantity || 0;
 
@@ -302,14 +315,16 @@ export function exportOrdersData(
 
   // Рассчитываем чистую прибыль и маржу по той же логике, что и в таблице
   for (const g of groups.values()) {
-    if (g.grossRevenue === 0) {
-      // Если выручка = 0, себестоимость не учитываем
-      g.netProfit = g.netAmount;
+    const rawCost = g.totalCost;
+    g.totalExpenses = g.ozonFeesTotal + (rawCost > 0 ? rawCost : 0);
+    if (g.grossBySellerPrice === 0) {
+      g.netProfit = g.totalAmountRub;
       g.profitMargin = 0;
       g.totalCost = 0;
-    } else if (g.totalCost > 0) {
-      g.netProfit = g.netAmount - g.totalCost;
-      g.profitMargin = g.grossRevenue > 0 ? (g.netProfit / g.grossRevenue) * 100 : 0;
+    } else {
+      const cost = rawCost > 0 ? rawCost : 0;
+      g.netProfit = g.grossBySellerPrice - g.ozonFeesTotal - cost;
+      g.profitMargin = g.grossBySellerPrice > 0 ? ((g.netProfit ?? 0) / g.grossBySellerPrice) * 100 : 0;
     }
   }
 
@@ -318,9 +333,16 @@ export function exportOrdersData(
     Статус: g.status || "-",
     Товары: Array.from(g.productNames).join("; ") || "-",
     Количество: g.quantity || 0,
-    Выручка: formatCurrencyForExport(g.grossRevenue),
-    К_выплате: formatCurrencyForExport(g.netAmount),
-    Себестоимость: g.totalCost > 0 ? formatCurrencyForExport(g.totalCost) : (g.grossRevenue === 0 ? formatCurrencyForExport(0) : "-"),
+    Сумма_продажи_по_цене_продавца: formatCurrencyForExport(g.grossBySellerPrice),
+    Начислено_выручка_баллы_партнеры: formatCurrencyForExport(g.grossInflow),
+    К_выплате: formatCurrencyForExport(g.totalAmountRub),
+    Себестоимость:
+      g.totalCost > 0
+        ? formatCurrencyForExport(g.totalCost)
+        : g.grossBySellerPrice === 0
+          ? formatCurrencyForExport(0)
+          : "-",
+    Всего_затрат_Ozon_и_СС: formatCurrencyForExport(g.totalExpenses),
     Чистая_прибыль: formatCurrencyForExport(g.netProfit),
     Маржа: formatPercentForExport(g.profitMargin),
     Дата_заказа: formatDateRu(g.date),

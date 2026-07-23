@@ -43,6 +43,7 @@ export interface Summary {
   successOrders: number;
   partialReturnOrders: number;
   fullReturnOrders: number;
+  cancelledOrders: number;
   incompleteOrders: number;
 
   totalProducts: number;
@@ -58,6 +59,9 @@ export interface Summary {
   productsWithoutCost: number;
   ordersWithCost: number;
   ordersWithoutCost: number;
+
+  /** Сумма доставленных единиц по позициям (quantitySold − returns), как для валовой по цене продавца */
+  soldUnits: number;
 }
 
 export interface CostBreakdown {
@@ -98,7 +102,10 @@ export interface ConsolidationAnalytics {
 //  Summary
 // ─────────────────────────────────────────────────────────────
 
-function sumFees(totals: OrderCategoryTotals): number {
+/**
+ * Сумма удержаний Ozon по полям totals (с тем же NET-правилом для эквайринга, что и в сводке).
+ */
+export function sumOrderFees(totals: OrderCategoryTotals): number {
   let sum = 0;
   for (const cat of FEE_CATEGORIES) {
     const key = cat as keyof OrderCategoryTotals;
@@ -115,6 +122,22 @@ function sumFees(totals: OrderCategoryTotals): number {
   return sum;
 }
 
+/**
+ * Валовая по цене продавца и доставленные единицы (как в buildSummary / KPI).
+ */
+export function computeSellerPriceMetrics(order: Order): { grossBySellerPrice: number; soldUnits: number } {
+  let grossBySellerPrice = 0;
+  let soldUnits = 0;
+  for (const s of order.shipments) {
+    for (const it of s.items) {
+      const delivered = Math.max(0, it.quantitySold - it.quantityReturned);
+      soldUnits += delivered;
+      grossBySellerPrice += delivered * (it.sellerPrice || 0);
+    }
+  }
+  return { grossBySellerPrice, soldUnits };
+}
+
 export function buildSummary(
   orders: Order[],
   nonOrder: NonOrderCharge[],
@@ -125,6 +148,7 @@ export function buildSummary(
   let pointsAmount = 0;
   let partnerProgramsAmount = 0;
   let grossBySellerPrice = 0;
+  let soldUnits = 0;
   let totalFees = 0;
   let actualPayout = 0;
   let commissionSum = 0;
@@ -132,6 +156,7 @@ export function buildSummary(
   let successOrders = 0;
   let partialReturnOrders = 0;
   let fullReturnOrders = 0;
+  let cancelledOrders = 0;
   let incompleteOrders = 0;
   let ordersWithCost = 0;
   let ordersWithoutCost = 0;
@@ -142,17 +167,13 @@ export function buildSummary(
     revenueAmount += o.totals.revenue + o.totals.returnRevenue;
     pointsAmount += o.pointsAmount;
     partnerProgramsAmount += o.totals.partnerPrograms;
-    totalFees += sumFees(o.totals);
+    totalFees += sumOrderFees(o.totals);
     actualPayout += o.totalAmountRub;
     commissionSum += Math.abs(o.totals.commission);
 
-    // Валовая по цене продавца: per-item, только доставленные единицы.
-    for (const s of o.shipments) {
-      for (const it of s.items) {
-        const delivered = Math.max(0, it.quantitySold - it.quantityReturned);
-        grossBySellerPrice += delivered * (it.sellerPrice || 0);
-      }
-    }
+    const { grossBySellerPrice: gbp, soldUnits: su } = computeSellerPriceMetrics(o);
+    grossBySellerPrice += gbp;
+    soldUnits += su;
 
     switch (o.classification) {
       case "success":
@@ -163,6 +184,9 @@ export function buildSummary(
         break;
       case "full_return":
         fullReturnOrders++;
+        break;
+      case "cancelled":
+        cancelledOrders++;
         break;
       case "incomplete":
         incompleteOrders++;
@@ -226,6 +250,7 @@ export function buildSummary(
     successOrders,
     partialReturnOrders,
     fullReturnOrders,
+    cancelledOrders,
     incompleteOrders,
 
     totalProducts: products.length,
@@ -241,6 +266,8 @@ export function buildSummary(
     productsWithoutCost,
     ordersWithCost,
     ordersWithoutCost,
+
+    soldUnits: round(soldUnits, 0),
   };
 }
 

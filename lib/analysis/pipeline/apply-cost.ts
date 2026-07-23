@@ -5,6 +5,8 @@
  *   - Себестоимость подтягивается по артикулу (строгое равенство trim+lower-case).
  *   - COGS за единицу возвращённого товара НЕ учитывается (товар физически возвращён и не продан).
  *     Итоговое COGS = costPerUnit * max(0, quantitySold - quantityReturned).
+ *   - Если доставленных единиц 0 (нет выручки в периоде, полный возврат и т.п.) — costPerUnit
+ *     не проставляется, в matched не попадаем (не считаем себестоимость по заказу).
  *   - Если артикула нет или себестоимость не найдена — costPerUnit = null, cogs = 0, hasCost=false.
  *   - На уровне заказа agg.totalCost = Σ cogs по всем товарам.
  */
@@ -81,9 +83,13 @@ function applyItemCost(
     return;
   }
 
+  const effectiveSold = Math.max(0, (item.quantitySold || 0) - (item.quantityReturned || 0));
+  if (effectiveSold <= 0) {
+    return;
+  }
+
   matched.add(item.article);
   item.costPerUnit = unit;
-  const effectiveSold = Math.max(0, (item.quantitySold || 0) - (item.quantityReturned || 0));
   item.cogs = roundTo2(unit * effectiveSold);
 }
 

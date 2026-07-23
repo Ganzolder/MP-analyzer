@@ -2,6 +2,8 @@
  * Типы данных для анализа финансовых отчётов Ozon
  */
 
+import type { OrderAccrualDetail } from "./pipeline/order-accrual-detail";
+
 /** Сырая строка из Excel файла */
 export interface RawRow {
   "ID начисления"?: string | number | null;
@@ -66,8 +68,14 @@ export interface AggregatedOrder {
   // Детализация доходов
   revenueAmount: number;         // Выручка (тип начисления "Выручка")
   pointsAmount: number;          // Баллы за скидки
-  grossRevenue: number;          // Валовая выручка = revenue + points
-  
+  grossRevenue: number;          // Легаси: revenue + points (без партнёрок)
+  /** Сумма продажи по цене продавца: Σ (доставлено × цена продавца) */
+  grossBySellerPrice?: number;
+  /** Валовая по начислениям: выручка + баллы + программы партнёров (колонка «Начислено» в заказах) */
+  grossInflow?: number;
+  /** Удержания Ozon (sumOrderFees по totals) */
+  ozonFeesTotal?: number;
+
   // Детализация удержаний Ozon
   commissionAmount: number;      // Комиссия
   logisticsAmount: number;       // Логистика
@@ -93,6 +101,9 @@ export interface AggregatedOrder {
   
   // Флаги
   isFromPreviousPeriod?: boolean; // Заказ из прошлого периода, не все начисления в текущем периоде
+
+  /** Группы услуг → типы начислений (по сырым ChargeLine; только для свежих импортов) */
+  accrualDetail?: OrderAccrualDetail;
 }
 
 /** Начисление без заказа (агрегированное по типу) */
@@ -228,12 +239,17 @@ export interface AnalysisResult {
     // Процент удержаний от валовой выручки
     feesPercent: number;
 
+    /** Проданных единиц товара (доставлено − возвраты по позициям) */
+    soldUnits: number;
+
     // Заказы
     totalOrders: number;
     completedOrders: number;
     returnedOrders: number;
     partialReturns: number;
     cancelledOrders: number;  // Отмененные заказы (только эквайринг)
+    /** «В работе» — неполный набор начислений в отчёте (pipeline: incomplete) */
+    incompleteOrders?: number;
 
     // Прочее
     totalProducts: number;

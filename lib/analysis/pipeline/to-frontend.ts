@@ -14,6 +14,8 @@ import type {
   ChargeLine,
 } from "../domain";
 import type { ConsolidationResult } from "./index";
+import { buildOrderAccrualDetail } from "./order-accrual-detail";
+import { computeSellerPriceMetrics, sumOrderFees } from "./metrics";
 
 export interface FrontendAdapterOptions {
   id: string;
@@ -30,6 +32,8 @@ function legacyStatus(classification: OrderClassification): "completed" | "retur
       return "returned";
     case "partial_return":
       return "partial_return";
+    case "cancelled":
+      return "cancelled";
     case "incomplete":
       return "in_progress";
   }
@@ -65,6 +69,9 @@ function toLegacyOrder(order: Order): any {
   const t = order.totals;
   const revenueAmount = t.revenue;
   const pointsAmount = order.pointsAmount;
+  const { grossBySellerPrice: gbp } = computeSellerPriceMetrics(order);
+  const grossInflow = t.revenue + pointsAmount + t.partnerPrograms;
+  const ozonFeesTotal = sumOrderFees(t);
   const commissionAmount = Math.abs(t.commission + t.returnCommission);
   const logisticsAmount = Math.abs(t.logistics);
   const acquiringAmount = t.acquiring;
@@ -76,9 +83,14 @@ function toLegacyOrder(order: Order): any {
 
   const missing: string[] = [];
   if (!order.hasRevenue) missing.push("Выручка");
-  if (!order.hasAcquiring) missing.push("Эквайринг");
-  if (!order.hasLogistics) missing.push("Логистика");
-  if (!order.hasCommission) missing.push("Вознаграждение за продажу");
+  if (order.isFromPreviousPeriod) {
+    if (!order.hasLogistics) missing.push("Логистика");
+    if (!order.hasCommission) missing.push("Вознаграждение за продажу");
+  } else {
+    if (!order.hasAcquiring) missing.push("Эквайринг");
+    if (!order.hasLogistics) missing.push("Логистика");
+    if (!order.hasCommission) missing.push("Вознаграждение за продажу");
+  }
 
   return {
     orderKey: order.orderKey,
@@ -96,6 +108,9 @@ function toLegacyOrder(order: Order): any {
     revenueAmount,
     pointsAmount,
     grossRevenue: revenueAmount + pointsAmount,
+    grossBySellerPrice: gbp,
+    grossInflow,
+    ozonFeesTotal,
     commissionAmount,
     logisticsAmount,
     acquiringAmount,
@@ -111,6 +126,7 @@ function toLegacyOrder(order: Order): any {
     costPerUnit: firstItemCost(order) ?? undefined,
     totalCost: order.totalCost,
     hasCost: order.hasCost,
+    isFromPreviousPeriod: order.isFromPreviousPeriod === true,
     shipments: order.shipments.map((s) => ({
       shipmentKey: s.shipmentKey,
       status: s.status,
@@ -181,7 +197,11 @@ export function toFrontendAnalysis(
   const { report, analytics } = res;
   const summary = analytics.summary;
 
-  const orders = report.orders.map(toLegacyOrder);
+  const orders = report.orders.map((o) => {
+    const lo = toLegacyOrder(o);
+    const accrualDetail = buildOrderAccrualDetail(report.charges, o.orderKey) ?? undefined;
+    return { ...lo, accrualDetail };
+  });
   const incompleteOrders = orders.filter((o) => o.classification === "incomplete");
   const returnedOrders = orders.filter(
     (o) => o.classification === "full_return" || o.classification === "partial_return"
@@ -266,6 +286,7 @@ export function toFrontendAnalysis(
       pointsAmount: summary.pointsAmount,
       partnerProgramsAmount: summary.partnerProgramsAmount,
       grossBySellerPrice: summary.grossBySellerPrice,
+      soldUnits: summary.soldUnits,
       ozonFees: summary.ozonFees,
       netPayout: summary.netPayout,
       actualPayout: summary.actualPayout,
@@ -285,7 +306,7 @@ export function toFrontendAnalysis(
       completedOrders: summary.successOrders,
       returnedOrders: summary.fullReturnOrders,
       partialReturns: summary.partialReturnOrders,
-      cancelledOrders: 0,
+      cancelledOrders: summary.cancelledOrders,
       incompleteOrders: summary.incompleteOrders,
       totalProducts: summary.totalProducts,
       avgCommissionPercent: summary.avgCommissionPercent,

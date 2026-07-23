@@ -520,6 +520,7 @@ export function getMockAnalysisResult(analysisId?: string): any {
       ozonFees,
       netPayout,
       feesPercent,
+      soldUnits: productMetrics.reduce((s, p) => s + p.totalSold, 0),
       totalOrders: uniqueOrders,
       completedOrders,
       returnedOrders,

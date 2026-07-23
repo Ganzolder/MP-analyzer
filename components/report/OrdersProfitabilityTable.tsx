@@ -15,28 +15,98 @@ import {
   ChevronLeft,
   TrendingUp,
   TrendingDown,
-  ArrowLeft,
+  History,
 } from "lucide-react";
-import { formatCurrency, formatDate, cn } from "@/lib/utils";
+import { formatCurrency, formatDate, formatNumber, cn } from "@/lib/utils";
 import type { AggregatedOrder } from "@/lib/analysis/types";
+import type {
+  OrderAccrualBlock,
+  OrderAccrualDetail,
+} from "@/lib/analysis/pipeline/order-accrual-detail";
 
 interface OrdersProfitabilityTableProps {
   orders: AggregatedOrder[];
 }
 
-type SortField = "orderNumber" | "date" | "revenue" | "netAmount" | "totalCost" | "netProfit" | "profitMargin";
+type SortField =
+  | "orderNumber"
+  | "date"
+  | "revenue"
+  | "netAmount"
+  | "totalCost"
+  | "totalExpenses"
+  | "netProfit"
+  | "profitMargin";
 type SortDirection = "asc" | "desc" | null;
+
+function AccrualBlockTable({ block, label }: { block: OrderAccrualBlock; label: string }) {
+  if (block.groups.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      <div className="text-xs font-medium text-muted-foreground">{label}</div>
+      {block.groups.map((g) => (
+        <div key={g.groupName} className="rounded-md border border-border/60 overflow-hidden">
+          <div className="px-2 py-1.5 bg-muted/40 text-sm font-medium flex justify-between gap-2">
+            <span className="min-w-0 break-words">{g.groupName}</span>
+            <span className="shrink-0 tabular-nums text-muted-foreground">
+              {g.hasMixedUnits
+                ? "—"
+                : g.types.length > 0 && g.types.every((t) => t.isPoints)
+                  ? formatNumber(g.subtotal)
+                  : formatCurrency(g.subtotal)}
+            </span>
+          </div>
+          <div className="divide-y divide-border/40">
+            {g.types.map((t) => (
+              <div
+                key={`${g.groupName}-${t.chargeType}`}
+                className="px-2 py-1.5 text-sm flex justify-between gap-2 items-start"
+              >
+                <span className="text-muted-foreground min-w-0 break-words">
+                  {t.chargeType}
+                  {t.lineCount > 1 ? (
+                    <span className="text-xs text-muted-foreground/80"> · {t.lineCount} стр.</span>
+                  ) : null}
+                </span>
+                <span className="shrink-0 text-right font-medium tabular-nums">
+                  {t.isPoints ? formatNumber(t.amount) : formatCurrency(t.amount)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OrderAccrualDetailView({ detail }: { detail: OrderAccrualDetail }) {
+  return (
+    <div className="space-y-3">
+      <AccrualBlockTable block={detail.rub} label="Начисления" />
+    </div>
+  );
+}
 
 interface GroupedOrder {
   orderNumber: string;
   date: Date | null;
   status: string;
-  // Суммы по заказу
-  grossRevenue: number;
+  /** Сумма продажи по цене продавца (Σ по позициям) */
+  grossBySellerPrice: number;
+  /** Валовая: выручка + баллы + партнёры — колонка «Начислено» */
+  grossInflow: number;
+  /** Удержания Ozon (sumOrderFees) */
+  ozonFeesTotal: number;
+  /** Удержания Ozon + себестоимость (все затраты по заказу) */
+  totalExpenses: number;
+  /** Легаси: сумма totalAmountRub по строкам (выплата) */
   netAmount: number;
   totalCost: number;
   netProfit?: number;
   profitMargin?: number;
+  /** @deprecated отображения; агрегат для старых участков */
+  grossRevenue: number;
   // Детализация по товарам
   products: AggregatedOrder[];
   // Детализация начислений
@@ -48,6 +118,7 @@ interface GroupedOrder {
   totalFees: number;
   // Флаги
   isFromPreviousPeriod?: boolean;
+  accrualDetail?: OrderAccrualDetail;
 }
 
 export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTableProps) {
@@ -78,6 +149,10 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
           orderNumber: key,
           date: order.orderDate || order.chargeDate,
           status: order.status,
+          grossBySellerPrice: 0,
+          grossInflow: 0,
+          ozonFeesTotal: 0,
+          totalExpenses: 0,
           grossRevenue: 0,
           netAmount: 0,
           totalCost: 0,
@@ -92,6 +167,9 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
       }
       
       const group = groups.get(key)!;
+      group.grossBySellerPrice += order.grossBySellerPrice ?? 0;
+      group.grossInflow += order.grossInflow ?? order.grossRevenue ?? 0;
+      group.ozonFeesTotal += order.ozonFeesTotal ?? order.totalFees ?? 0;
       group.grossRevenue += order.grossRevenue || 0;
       group.netAmount += order.totalAmountRub || 0;
       group.totalCost += order.totalCost || 0;
@@ -109,18 +187,20 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
     });
     
     // Рассчитываем чистую прибыль и рентабельность
-    Array.from(groups.values()).forEach(group => {
-      // Если выручка равна 0, себестоимость не учитывается
-      if (group.grossRevenue === 0) {
+    Array.from(groups.values()).forEach((group) => {
+      group.accrualDetail = group.products[0]?.accrualDetail;
+      const gbp = group.grossBySellerPrice;
+      const fee = group.ozonFeesTotal;
+      const rawTotalCost = group.totalCost;
+      group.totalExpenses = fee + (rawTotalCost > 0 ? rawTotalCost : 0);
+      if (gbp === 0) {
         group.netProfit = group.netAmount;
         group.profitMargin = 0;
-        // Обнуляем себестоимость для отображения
         group.totalCost = 0;
-      } else if (group.totalCost > 0) {
-        group.netProfit = group.netAmount - group.totalCost;
-        group.profitMargin = group.grossRevenue > 0 
-          ? (group.netProfit / group.grossRevenue) * 100 
-          : 0;
+      } else {
+        const cost = rawTotalCost > 0 ? rawTotalCost : 0;
+        group.netProfit = gbp - fee - cost;
+        group.profitMargin = gbp > 0 ? (group.netProfit! / gbp) * 100 : 0;
       }
     });
     
@@ -150,14 +230,14 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
       filtered = filtered.filter(order => order.status === statusFilter);
     }
     
-    // Фильтр по выручке
+    // Фильтр по сумме продажи (цена продавца)
     if (minRevenue) {
-      filtered = filtered.filter(order => order.grossRevenue >= parseFloat(minRevenue));
+      filtered = filtered.filter((order) => order.grossBySellerPrice >= parseFloat(minRevenue));
     }
     
-    // Фильтр по начислено
+    // Фильтр по валовой начислений
     if (minNetAmount) {
-      filtered = filtered.filter(order => order.netAmount >= parseFloat(minNetAmount));
+      filtered = filtered.filter((order) => order.grossInflow >= parseFloat(minNetAmount));
     }
     
     // Фильтр по чистой прибыли
@@ -194,16 +274,20 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
           bValue = b.date || new Date(0);
           break;
         case "revenue":
-          aValue = a.grossRevenue;
-          bValue = b.grossRevenue;
+          aValue = a.grossBySellerPrice;
+          bValue = b.grossBySellerPrice;
           break;
         case "netAmount":
-          aValue = a.netAmount;
-          bValue = b.netAmount;
+          aValue = a.grossInflow;
+          bValue = b.grossInflow;
           break;
         case "totalCost":
           aValue = a.totalCost;
           bValue = b.totalCost;
+          break;
+        case "totalExpenses":
+          aValue = a.totalExpenses;
+          bValue = b.totalExpenses;
           break;
         case "netProfit":
           aValue = a.netProfit !== undefined ? a.netProfit : 0;
@@ -240,17 +324,17 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
         totalRevenue: 0,
         totalNetAmount: 0,
         totalCost: 0,
+        totalExpenses: 0,
         totalNetProfit: 0,
         avgProfitMargin: 0,
         ordersCount: 0,
       };
     }
     
-    const totalRevenue = filteredOrders.reduce((sum, o) => sum + (o.grossRevenue || 0), 0);
-    const totalNetAmount = filteredOrders.reduce((sum, o) => sum + (o.netAmount || 0), 0);
+    const totalRevenue = filteredOrders.reduce((sum, o) => sum + o.grossBySellerPrice, 0);
+    const totalNetAmount = filteredOrders.reduce((sum, o) => sum + o.grossInflow, 0);
     const totalCost = filteredOrders.reduce((sum, o) => {
-      // Себестоимость учитываем только если выручка > 0
-      if (o.grossRevenue > 0) {
+      if (o.grossBySellerPrice > 0) {
         return sum + (o.totalCost || 0);
       }
       return sum;
@@ -259,30 +343,29 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
       if (o.netProfit !== undefined) {
         return sum + o.netProfit;
       }
-      // Если нет netProfit, считаем как netAmount (для заказов без себестоимости)
-      return sum + (o.netAmount || 0);
+      return sum;
     }, 0);
+    const totalExpenses = filteredOrders.reduce((sum, o) => sum + o.totalExpenses, 0);
     
-    // Средняя рентабельность (только для заказов с выручкой > 0)
-    const ordersWithRevenue = filteredOrders.filter(o => o.grossRevenue > 0);
-    const avgProfitMargin = ordersWithRevenue.length > 0
-      ? ordersWithRevenue.reduce((sum, o) => {
+    const ordersWithSale = filteredOrders.filter((o) => o.grossBySellerPrice > 0);
+    const avgProfitMargin = ordersWithSale.length > 0
+      ? ordersWithSale.reduce((sum, o) => {
           if (o.profitMargin !== undefined) {
             return sum + o.profitMargin;
           }
-          // Если нет profitMargin, считаем из netProfit или netAmount
-          if (o.grossRevenue > 0) {
-            const profit = o.netProfit !== undefined ? o.netProfit : (o.netAmount || 0);
-            return sum + (profit / o.grossRevenue) * 100;
+          if (o.grossBySellerPrice > 0) {
+            const profit = o.netProfit !== undefined ? o.netProfit : 0;
+            return sum + (profit / o.grossBySellerPrice) * 100;
           }
           return sum;
-        }, 0) / ordersWithRevenue.length
+        }, 0) / ordersWithSale.length
       : 0;
     
     return {
       totalRevenue,
       totalNetAmount,
       totalCost,
+      totalExpenses,
       totalNetProfit,
       avgProfitMargin,
       ordersCount: filteredOrders.length,
@@ -424,7 +507,7 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
                   </Select>
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Выручка от ₽</label>
+                  <label className="text-xs text-muted-foreground mb-1 block">Сумма продажи от ₽</label>
                   <Input
                     type="number"
                     placeholder="Мин"
@@ -488,10 +571,12 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
             
             {/* Панель с агрегированными суммами по отфильтрованным заказам */}
             {filteredOrders.length > 0 && (
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
                 <Card className="glass">
                   <CardContent className="pt-4">
-                    <div className="text-xs text-muted-foreground mb-1">Выручка</div>
+                    <div className="text-xs text-muted-foreground mb-1 leading-tight">
+                      Сумма продажи (по цене продавца)
+                    </div>
                     <div className="text-lg font-semibold">{formatCurrency(filteredSummary.totalRevenue)}</div>
                     <div className="text-xs text-muted-foreground mt-1">{filteredSummary.ordersCount} заказов</div>
                   </CardContent>
@@ -511,6 +596,13 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
                   <CardContent className="pt-4">
                     <div className="text-xs text-muted-foreground mb-1">Себестоимость</div>
                     <div className="text-lg font-semibold">{formatCurrency(filteredSummary.totalCost)}</div>
+                  </CardContent>
+                </Card>
+                <Card className="glass">
+                  <CardContent className="pt-4">
+                    <div className="text-xs text-muted-foreground mb-1 leading-tight">Всего затрат</div>
+                    <div className="text-lg font-semibold">{formatCurrency(filteredSummary.totalExpenses)}</div>
+                    <div className="text-xs text-muted-foreground mt-1">Ozon + СС</div>
                   </CardContent>
                 </Card>
                 <Card className="glass">
@@ -574,12 +666,26 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
                           className="text-right py-3 px-2 font-medium cursor-pointer hover:bg-muted/50 select-none"
                           onClick={() => handleSort("revenue")}
                         >
-                          <div className="flex items-center justify-end">
-                            Выручка
+                          <div className="flex items-start justify-end gap-1 max-w-[11rem] ml-auto text-xs">
+                            <span className="whitespace-pre-line text-right leading-tight">
+                              {`Сумма продажи\n(по цене продавца)`}
+                            </span>
                             {getSortIcon("revenue")}
                           </div>
                         </th>
                         <th className="text-right py-3 px-2 font-medium">Себестоимость</th>
+                        <th
+                          className="text-right py-3 px-2 font-medium cursor-pointer hover:bg-muted/50 select-none"
+                          title="Удержания Ozon и себестоимость"
+                          onClick={() => handleSort("totalExpenses")}
+                        >
+                          <div className="flex items-start justify-end gap-1 max-w-[8rem] ml-auto text-xs">
+                            <span className="whitespace-pre-line text-right leading-tight">
+                              {`Всего\nзатрат`}
+                            </span>
+                            {getSortIcon("totalExpenses")}
+                          </div>
+                        </th>
                         <th
                           className="text-right py-3 px-2 font-medium cursor-pointer hover:bg-muted/50 select-none"
                           onClick={() => handleSort("netAmount")}
@@ -613,7 +719,11 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
                       {paginatedOrders.map((order) => {
                         const isExpanded = expandedOrders.has(order.orderNumber);
                         const hasMultipleProducts = order.products.length > 1;
-                        
+                        const canExpandOrder =
+                          hasMultipleProducts ||
+                          order.products.some((p) => p.chargesCount > 1) ||
+                          order.status === "in_progress";
+
                         return (
                           <>
                             <tr 
@@ -624,7 +734,7 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
                               )}
                             >
                               <td className="py-3 px-2">
-                                {(hasMultipleProducts || order.products.some(p => p.chargesCount > 1)) && (
+                                {canExpandOrder && (
                                   <Button
                                     variant="ghost"
                                     size="sm"
@@ -642,8 +752,8 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
                               <td className="py-3 px-2">
                                 <div className="flex items-center gap-1">
                                   {order.isFromPreviousPeriod && (
-                                    <span title="Заказ из прошлого периода, не все начисления в текущем периоде">
-                                      <ArrowLeft className="h-3 w-3 text-muted-foreground" />
+                                    <span title="Прошлый период: в отчёте есть выручка, нет «Возврат выручки» и нет эквайринга (оплата в предыдущем отчёте)">
+                                      <History className="h-3.5 w-3.5 text-amber-600 dark:text-amber-500" />
                                     </span>
                                   )}
                                   <span className="font-mono text-xs">{order.orderNumber}</span>
@@ -669,15 +779,18 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
                                   )}
                                 </div>
                               </td>
-                              <td className="py-3 px-2 text-right">{formatCurrency(order.grossRevenue)}</td>
+                              <td className="py-3 px-2 text-right">{formatCurrency(order.grossBySellerPrice)}</td>
                               <td className="py-3 px-2 text-right text-muted-foreground">
                                 {order.totalCost > 0 ? formatCurrency(order.totalCost) : "-"}
                               </td>
+                              <td className="py-3 px-2 text-right text-muted-foreground">
+                                {order.totalExpenses > 0 ? formatCurrency(order.totalExpenses) : "-"}
+                              </td>
                               <td className={cn(
                                 "py-3 px-2 text-right font-medium",
-                                order.netAmount >= 0 ? "text-success" : "text-destructive"
+                                order.grossInflow >= 0 ? "text-success" : "text-destructive"
                               )}>
-                                {formatCurrency(order.netAmount)}
+                                {formatCurrency(order.grossInflow)}
                               </td>
                               <td className={cn(
                                 "py-3 px-2 text-right font-semibold",
@@ -700,7 +813,7 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
                             {/* Детализация заказа */}
                             {isExpanded && (
                               <tr>
-                                <td colSpan={10} className="py-4 px-2 bg-muted/10">
+                                <td colSpan={11} className="py-4 px-2 bg-muted/10">
                                   <div className="space-y-4 pl-6 border-l-2 border-primary/20">
                                     {/* Товары в заказе */}
                                     {hasMultipleProducts && (
@@ -717,15 +830,20 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
                                                   </div>
                                                 </div>
                                                 <div className="text-right text-sm">
-                                                  <div className="text-muted-foreground">Выручка: {formatCurrency(product.grossRevenue || 0)}</div>
+                                                  <div className="text-muted-foreground">
+                                                    Сумма (цена пр.): {formatCurrency(product.grossBySellerPrice ?? 0)}
+                                                  </div>
                                                   {product.totalCost !== undefined && product.totalCost > 0 && (
                                                     <div className="text-muted-foreground">Себестоимость: {formatCurrency(product.totalCost)}</div>
                                                   )}
+                                                  <div className="text-muted-foreground">
+                                                    Начислено: {formatCurrency(product.grossInflow ?? product.grossRevenue ?? 0)}
+                                                  </div>
                                                   <div className={cn(
                                                     "font-medium",
                                                     (product.totalAmountRub || 0) >= 0 ? "text-success" : "text-destructive"
                                                   )}>
-                                                    Начислено: {formatCurrency(product.totalAmountRub || 0)}
+                                                    К выплате: {formatCurrency(product.totalAmountRub || 0)}
                                                   </div>
                                                 </div>
                                               </div>
@@ -738,33 +856,47 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
                                     {/* Детализация начислений */}
                                     <div>
                                       <h4 className="text-sm font-semibold mb-2">Детализация начислений:</h4>
-                                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                                        <div className="p-2 rounded bg-muted/30">
-                                          <div className="text-xs text-muted-foreground">Выручка</div>
-                                          <div className="font-medium text-success">{formatCurrency(order.grossRevenue)}</div>
+                                      {order.accrualDetail ? (
+                                        <div className="max-w-3xl">
+                                          <OrderAccrualDetailView detail={order.accrualDetail} />
                                         </div>
-                                        <div className="p-2 rounded bg-muted/30">
-                                          <div className="text-xs text-muted-foreground">Комиссия</div>
-                                          <div className="font-medium text-destructive">-{formatCurrency(order.commissionAmount)}</div>
-                                        </div>
-                                        <div className="p-2 rounded bg-muted/30">
-                                          <div className="text-xs text-muted-foreground">Логистика</div>
-                                          <div className="font-medium text-destructive">-{formatCurrency(order.logisticsAmount)}</div>
-                                        </div>
-                                        <div className="p-2 rounded bg-muted/30">
-                                          <div className="text-xs text-muted-foreground">Эквайринг</div>
-                                          <div className="font-medium text-destructive">-{formatCurrency(order.acquiringAmount)}</div>
-                                        </div>
-                                        {order.returnAmount > 0 && (
+                                      ) : (
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                                           <div className="p-2 rounded bg-muted/30">
-                                            <div className="text-xs text-muted-foreground">Возвраты</div>
-                                            <div className="font-medium text-destructive">-{formatCurrency(order.returnAmount)}</div>
+                                            <div className="text-xs text-muted-foreground">Сумма по цене продавца</div>
+                                            <div className="font-medium text-success">{formatCurrency(order.grossBySellerPrice)}</div>
                                           </div>
-                                        )}
-                                        {order.otherFeesAmount > 0 && (
                                           <div className="p-2 rounded bg-muted/30">
-                                            <div className="text-xs text-muted-foreground">Прочие</div>
-                                            <div className="font-medium text-destructive">-{formatCurrency(order.otherFeesAmount)}</div>
+                                            <div className="text-xs text-muted-foreground">Комиссия</div>
+                                            <div className="font-medium text-destructive">-{formatCurrency(order.commissionAmount)}</div>
+                                          </div>
+                                          <div className="p-2 rounded bg-muted/30">
+                                            <div className="text-xs text-muted-foreground">Логистика</div>
+                                            <div className="font-medium text-destructive">-{formatCurrency(order.logisticsAmount)}</div>
+                                          </div>
+                                          <div className="p-2 rounded bg-muted/30">
+                                            <div className="text-xs text-muted-foreground">Эквайринг</div>
+                                            <div className="font-medium text-destructive">-{formatCurrency(order.acquiringAmount)}</div>
+                                          </div>
+                                          {order.returnAmount > 0 && (
+                                            <div className="p-2 rounded bg-muted/30">
+                                              <div className="text-xs text-muted-foreground">Возвраты</div>
+                                              <div className="font-medium text-destructive">-{formatCurrency(order.returnAmount)}</div>
+                                            </div>
+                                          )}
+                                          {order.otherFeesAmount > 0 && (
+                                            <div className="p-2 rounded bg-muted/30">
+                                              <div className="text-xs text-muted-foreground">Прочие</div>
+                                              <div className="font-medium text-destructive">-{formatCurrency(order.otherFeesAmount)}</div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-md text-sm">
+                                        {order.totalExpenses > 0 && (
+                                          <div className="p-2 rounded bg-muted/30">
+                                            <div className="text-xs text-muted-foreground">Всего затрат (Ozon + СС)</div>
+                                            <div className="font-medium">{formatCurrency(order.totalExpenses)}</div>
                                           </div>
                                         )}
                                         {order.totalCost > 0 && (
@@ -773,15 +905,19 @@ export function OrdersProfitabilityTable({ orders }: OrdersProfitabilityTablePro
                                             <div className="font-medium">-{formatCurrency(order.totalCost)}</div>
                                           </div>
                                         )}
-                                        <div className={cn(
-                                          "p-2 rounded font-semibold",
-                                          order.netProfit !== undefined
-                                            ? (order.netProfit >= 0 ? "bg-success/20 text-success" : "bg-destructive/20 text-destructive")
-                                            : "bg-muted/30"
-                                        )}>
+                                        <div
+                                          className={cn(
+                                            "p-2 rounded font-semibold",
+                                            order.netProfit !== undefined
+                                              ? (order.netProfit >= 0 ? "bg-success/20 text-success" : "bg-destructive/20 text-destructive")
+                                              : "bg-muted/30"
+                                          )}
+                                        >
                                           <div className="text-xs text-muted-foreground">Чистая прибыль</div>
                                           <div className="font-medium">
-                                            {order.netProfit !== undefined ? formatCurrency(order.netProfit) : formatCurrency(order.netAmount)}
+                                            {order.netProfit !== undefined
+                                              ? formatCurrency(order.netProfit)
+                                              : formatCurrency(order.netAmount)}
                                           </div>
                                         </div>
                                       </div>

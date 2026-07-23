@@ -430,6 +430,9 @@ export async function loadImport(iaoUserId: string, importId: string): Promise<F
       hasRevenue: !!row.has_revenue,
       hasCommission: !!row.has_commission,
       hasReturnLogisticsOrProcessing: !!row.has_return,
+      qtySumLogistics: Number((row as any).qty_sum_logistics ?? 0),
+      qtySumReturnLogistics: Number((row as any).qty_sum_return_logistics ?? 0),
+      qtySumReturnProcessing: Number((row as any).qty_sum_return_processing ?? 0),
       totalCost: Number(row.total_cost ?? 0),
       hasCost: !!row.has_cost,
     };

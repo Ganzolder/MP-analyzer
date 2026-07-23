@@ -20,3 +20,5 @@ python-service
 ~$*
 *.pptx
 *.docx
+.vercel
+.env*

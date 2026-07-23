@@ -62,12 +62,14 @@ export interface ChargeLine {
  *   success        — все 4 обязательных типа начислений + нет возврата.
  *   partial_return — часть отправлений/товаров вернули, часть осталась.
  *   full_return    — все отправления вернули.
+ *   cancelled      — в строках есть отмена заказа (индекс ошибок+отмена, операционные ошибки: отмена и т.д.).
  *   incomplete     — не все обязательные типы присутствуют (например, заказ на границе периода).
  */
 export type OrderClassification =
   | "success"
   | "partial_return"
   | "full_return"
+  | "cancelled"
   | "incomplete";
 
 /** Статус одного отправления внутри заказа. */
@@ -88,7 +90,7 @@ export interface OrderItem {
   productName: string;
   sku: string;
 
-  /** Сколько штук товара заявлено в отправлении (max quantity по группе). */
+  /** Сколько штук продано по отправлению — только сумма quantity из строк «Выручка» (без выручки = 0). */
   quantitySold: number;
   /** Сколько штук возвращено (посчитано по строкам возврата). */
   quantityReturned: number;
@@ -164,9 +166,23 @@ export interface Order {
   hasCommission: boolean;
   hasReturnLogisticsOrProcessing: boolean;
 
+  /**
+   * Суммы |quantity| по всем строкам заказа (для classify / «обработка отмен» vs логистика).
+   * Агрегируются в consolidate по category logistics / returnLogistics / returnProcessing.
+   */
+  qtySumLogistics: number;
+  qtySumReturnLogistics: number;
+  qtySumReturnProcessing: number;
+
   /** Себестоимость заказа (с учётом возвратов). */
   totalCost: number;
   hasCost: boolean;
+
+  /**
+   * True, если в текущем отчёте нет эквайринга, но выручка есть и нет «Возврат выручки»
+   * — типично заказ, оплата по которому в прошлом периоде (classify → success + этот флаг).
+   */
+  isFromPreviousPeriod?: boolean;
 }
 
 /** Начисление без привязки к заказу (orderKey === null, но не подписка). */

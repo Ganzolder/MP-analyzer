@@ -32,7 +32,7 @@ function line(partial: Partial<ChargeLine> & { chargeType: string }): ChargeLine
 }
 
 describe("consolidate", () => {
-  it("дедуплицирует количество товара: max(quantity) по группе (shipment, article)", () => {
+  it("quantitySold только из «Выручка» при полном наборе начислений", () => {
     const charges: ChargeLine[] = [
       line({
         chargeId: "79224088-0238",
@@ -193,5 +193,44 @@ describe("consolidate", () => {
     const { orders } = consolidate(charges);
     expect(orders[0].totalAmountRub).toBe(1000);
     expect(orders[0].pointsAmount).toBe(50);
+  });
+
+  it("без строки «Выручка» quantitySold = 0, hasRevenue = false (даже если в других строках есть qty)", () => {
+    const charges: ChargeLine[] = [
+      line({
+        chargeId: "99-1",
+        orderKey: "99",
+        shipmentSuffix: "1",
+        chargeType: "Эквайринг",
+        article: "A1",
+        productName: "Товар",
+        quantity: 2,
+        totalAmount: -20,
+      }),
+      line({
+        chargeId: "99-1",
+        orderKey: "99",
+        shipmentSuffix: "1",
+        chargeType: "Логистика",
+        article: "A1",
+        productName: "Товар",
+        quantity: 2,
+        totalAmount: -100,
+      }),
+      line({
+        chargeId: "99-1",
+        orderKey: "99",
+        shipmentSuffix: "1",
+        chargeType: "Вознаграждение за продажу",
+        article: "A1",
+        productName: "Товар",
+        quantity: 2,
+        totalAmount: -120,
+      }),
+    ];
+    const { orders } = consolidate(charges);
+    expect(orders[0].hasRevenue).toBe(false);
+    expect(orders[0].shipments[0].items[0].quantitySold).toBe(0);
+    expect(orders[0].shipments[0].items[0].quantityReturned).toBe(0);
   });
 });

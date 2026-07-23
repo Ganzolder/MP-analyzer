@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { consolidate } from "./consolidate";
 import { classifyOrders } from "./classify";
-import { buildSummary } from "./metrics";
+import { buildSummary, computeSellerPriceMetrics, sumOrderFees } from "./metrics";
 import type { ChargeLine } from "../domain";
 import { classifyChargeType } from "../charge-types";
 
@@ -100,6 +100,7 @@ describe("buildSummary — Валовая по цене продавца", () =>
     const { orders, nonOrderCharges, subscriptions } = buildAll(charges);
     const summary = buildSummary(orders, nonOrderCharges, subscriptions, []);
     expect(summary.grossBySellerPrice).toBe(5 * 100 + 5 * 200);
+    expect(summary.soldUnits).toBe(10);
   });
 
   it("частичный возврат: в валовой учитываются только доставленные единицы", () => {
@@ -162,6 +163,95 @@ describe("buildSummary — Валовая по цене продавца", () =>
     const summary = buildSummary(orders, nonOrderCharges, subscriptions, []);
     // 3 − 1 = 2 шт × 100
     expect(summary.grossBySellerPrice).toBe(200);
+    expect(summary.soldUnits).toBe(2);
+  });
+
+  it("частичный возврат с несколькими return-категориями: возврат считается один раз (MAX, не SUM)", () => {
+    // Ozon часто формирует на 1 физический возврат сразу 3 строки:
+    // «Обратная логистика», «Возврат выручки», «Обработка возвратов». Раньше они
+    // суммировались, и quantityReturned инфлейтился (regression: grossBySellerPrice = 0 вместо 200).
+    const charges: ChargeLine[] = [
+      line({
+        chargeId: "14-1",
+        orderKey: "14",
+        shipmentSuffix: "1",
+        chargeType: "Выручка",
+        article: "A",
+        productName: "Товар",
+        quantity: 3,
+        sellerPrice: 100,
+        totalAmount: 300,
+      }),
+      line({
+        chargeId: "14-1",
+        orderKey: "14",
+        shipmentSuffix: "1",
+        chargeType: "Эквайринг",
+        article: "A",
+        productName: "Товар",
+        quantity: 3,
+        totalAmount: -10,
+      }),
+      line({
+        chargeId: "14-1",
+        orderKey: "14",
+        shipmentSuffix: "1",
+        chargeType: "Логистика",
+        article: "A",
+        productName: "Товар",
+        quantity: 3,
+        totalAmount: -30,
+      }),
+      line({
+        chargeId: "14-1",
+        orderKey: "14",
+        shipmentSuffix: "1",
+        chargeType: "Вознаграждение за продажу",
+        article: "A",
+        productName: "Товар",
+        quantity: 3,
+        totalAmount: -30,
+      }),
+      // Три строки на 1 физический возврат — все с qty=1.
+      line({
+        chargeId: "14-1",
+        orderKey: "14",
+        shipmentSuffix: "1",
+        chargeType: "Обратная логистика",
+        article: "A",
+        productName: "Товар",
+        quantity: 1,
+        totalAmount: -20,
+      }),
+      line({
+        chargeId: "14-1",
+        orderKey: "14",
+        shipmentSuffix: "1",
+        chargeType: "Обработка возвратов, отмен и невыкупов партнёрами",
+        article: "A",
+        productName: "Товар",
+        quantity: 1,
+        totalAmount: -10,
+      }),
+      line({
+        chargeId: "14-1",
+        orderKey: "14",
+        shipmentSuffix: "1",
+        chargeType: "Возврат выручки",
+        article: "A",
+        productName: "Товар",
+        quantity: 1,
+        totalAmount: -100,
+      }),
+    ];
+
+    const { orders, nonOrderCharges, subscriptions } = buildAll(charges);
+    const item = orders[0].shipments[0].items[0];
+    expect(item.quantitySold).toBe(3);
+    expect(item.quantityReturned).toBe(1); // MAX(1,1,1), не 3
+    const summary = buildSummary(orders, nonOrderCharges, subscriptions, []);
+    expect(summary.grossBySellerPrice).toBe(200); // 2 × 100
+    expect(summary.soldUnits).toBe(2);
   });
 
   it("полный возврат отправления: в валовой 0", () => {
@@ -232,6 +322,7 @@ describe("buildSummary — Валовая по цене продавца", () =>
     const { orders, nonOrderCharges, subscriptions } = buildAll(charges);
     const summary = buildSummary(orders, nonOrderCharges, subscriptions, []);
     expect(summary.grossBySellerPrice).toBe(0);
+    expect(summary.soldUnits).toBe(0);
   });
 });
 
@@ -466,7 +557,74 @@ describe("buildSummary — Итого начислено", () => {
     const { orders, nonOrderCharges, subscriptions } = buildAll(charges);
     const summary = buildSummary(orders, nonOrderCharges, subscriptions, []);
     expect(summary.grossBySellerPrice).toBe(1000);
+    expect(summary.soldUnits).toBe(2);
     expect(summary.ozonFees).toBe(30 + 120 + 150);
     expect(summary.netPayout).toBe(1000 - (30 + 120 + 150));
+  });
+});
+
+describe("computeSellerPriceMetrics & sumOrderFees", () => {
+  it("выровнены с buildSummary / удержаниями по одному заказу", () => {
+    const charges: ChargeLine[] = [
+      line({
+        chargeId: "11-1",
+        orderKey: "11",
+        shipmentSuffix: "1",
+        chargeType: "Выручка",
+        article: "A1",
+        productName: "Товар 1",
+        quantity: 5,
+        sellerPrice: 100,
+        totalAmount: 500,
+      }),
+      line({
+        chargeId: "11-1",
+        orderKey: "11",
+        shipmentSuffix: "1",
+        chargeType: "Выручка",
+        article: "A2",
+        productName: "Товар 2",
+        quantity: 5,
+        sellerPrice: 200,
+        totalAmount: 1000,
+      }),
+      line({
+        chargeId: "11-1",
+        orderKey: "11",
+        shipmentSuffix: "1",
+        chargeType: "Эквайринг",
+        article: "A1",
+        productName: "Товар 1",
+        quantity: 5,
+        totalAmount: -20,
+      }),
+      line({
+        chargeId: "11-1",
+        orderKey: "11",
+        shipmentSuffix: "1",
+        chargeType: "Логистика",
+        article: "A1",
+        productName: "Товар 1",
+        quantity: 5,
+        totalAmount: -100,
+      }),
+      line({
+        chargeId: "11-1",
+        orderKey: "11",
+        shipmentSuffix: "1",
+        chargeType: "Вознаграждение за продажу",
+        article: "A1",
+        productName: "Товар 1",
+        quantity: 5,
+        totalAmount: -150,
+      }),
+    ];
+    const { orders, nonOrderCharges, subscriptions } = buildAll(charges);
+    const o = orders[0];
+    const m = computeSellerPriceMetrics(o);
+    const summary = buildSummary(orders, nonOrderCharges, subscriptions, []);
+    expect(m.grossBySellerPrice).toBe(summary.grossBySellerPrice);
+    expect(m.soldUnits).toBe(summary.soldUnits);
+    expect(sumOrderFees(o.totals)).toBe(20 + 100 + 150);
   });
 });

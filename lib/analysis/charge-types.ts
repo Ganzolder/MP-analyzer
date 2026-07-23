@@ -64,6 +64,7 @@ const CATEGORY_PATTERNS: Array<{ category: ChargeCategory; patterns: string[] }>
       "обработка отмененных",
       "невыкупов партнёрами",
       "невыкупов партнерами",
+      "невостребован",
     ],
   },
   {
@@ -151,6 +152,28 @@ const RETURN_CATEGORIES: ReadonlyArray<ChargeCategory> = [
 
 export function isReturnCategory(cat: ChargeCategory): boolean {
   return RETURN_CATEGORIES.includes(cat);
+}
+
+/**
+ * Тип начисления означает отмену заказа (Озон): штрафы/удержания за отмену, индекс ошибок+отмена и т.п.
+ * Не путать с «отмена начисления» в логистике.
+ */
+export function isOrderCancelledChargeType(chargeType: string | null | undefined): boolean {
+  if (!chargeType) return false;
+  const t = chargeType.toLowerCase();
+  if (t.includes("превышение") && t.includes("индекс") && t.includes("ошиб") && t.includes("отмен")) {
+    return true;
+  }
+  if (t.includes("операционных ошибок") && t.includes("отмена")) {
+    return true;
+  }
+  if (t.includes("отмена заказа")) {
+    return true;
+  }
+  if (t.includes("отмена отправления")) {
+    return true;
+  }
+  return false;
 }
 
 /**

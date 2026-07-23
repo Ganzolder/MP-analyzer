@@ -62,6 +62,8 @@ describe("applyCost", () => {
   it("при полном возврате COGS = 0", () => {
     const charges = [
       ...success("2", "A1", 2),
+      line({ chargeId: "2-1", orderKey: "2", shipmentSuffix: "1", chargeType: "Возврат выручки", article: "A1", productName: "Товар", quantity: 2, totalAmount: -2000 }),
+      line({ chargeId: "2-1", orderKey: "2", shipmentSuffix: "1", chargeType: "Эквайринг", article: "A1", productName: "Товар", quantity: 2, totalAmount: 40 }),
       line({ chargeId: "2-1", orderKey: "2", shipmentSuffix: "1", chargeType: "Обратная логистика", article: "A1", productName: "Товар", quantity: 2, totalAmount: -200 }),
       line({ chargeId: "2-1", orderKey: "2", shipmentSuffix: "1", chargeType: "Обработка возвратов, отмен и невыкупов партнёрами", article: "A1", productName: "Товар", quantity: 2, totalAmount: -50 }),
     ];
@@ -77,6 +79,8 @@ describe("applyCost", () => {
   it("при частичном возврате COGS только за проданные единицы", () => {
     const charges = [
       ...success("3", "A1", 4),
+      line({ chargeId: "3-1", orderKey: "3", shipmentSuffix: "1", chargeType: "Возврат выручки", article: "A1", productName: "Товар", quantity: 1, totalAmount: -1000 }),
+      line({ chargeId: "3-1", orderKey: "3", shipmentSuffix: "1", chargeType: "Эквайринг", article: "A1", productName: "Товар", quantity: 1, totalAmount: 20 }),
       line({ chargeId: "3-1", orderKey: "3", shipmentSuffix: "1", chargeType: "Обратная логистика", article: "A1", productName: "Товар", quantity: 1, totalAmount: -100 }),
     ];
     const { orders } = consolidate(charges);
@@ -102,5 +106,49 @@ describe("applyCost", () => {
     classifyOrders(orders);
     const res = applyCost(orders, new Map([["Y-1", 100]]));
     expect(res.unmatchedArticles.has("X-404")).toBe(true);
+  });
+
+  it("без «Выручка» в отчёте — COGS = 0 даже при совпадении артикула в cost-мапе", () => {
+    const charges = [
+      line({
+        chargeId: "6-1",
+        orderKey: "6",
+        shipmentSuffix: "1",
+        chargeType: "Эквайринг",
+        article: "A1",
+        productName: "Товар",
+        quantity: 2,
+        totalAmount: -40,
+      }),
+      line({
+        chargeId: "6-1",
+        orderKey: "6",
+        shipmentSuffix: "1",
+        chargeType: "Логистика",
+        article: "A1",
+        productName: "Товар",
+        quantity: 2,
+        totalAmount: -200,
+      }),
+      line({
+        chargeId: "6-1",
+        orderKey: "6",
+        shipmentSuffix: "1",
+        chargeType: "Вознаграждение за продажу",
+        article: "A1",
+        productName: "Товар",
+        quantity: 2,
+        totalAmount: -300,
+      }),
+    ];
+    const { orders } = consolidate(charges);
+    classifyOrders(orders);
+    applyCost(orders, new Map([["A1", 500]]));
+
+    expect(orders[0].classification).toBe("incomplete");
+    expect(orders[0].shipments[0].items[0].quantitySold).toBe(0);
+    expect(orders[0].shipments[0].items[0].cogs).toBe(0);
+    expect(orders[0].totalCost).toBe(0);
+    expect(orders[0].hasCost).toBe(false);
   });
 });

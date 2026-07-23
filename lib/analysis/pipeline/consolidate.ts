@@ -5,13 +5,14 @@
  *   - Один заказ — все строки с одним orderKey (префикс ID до первого дефиса).
  *   - Внутри заказа — отправления по shipmentSuffix (может быть null → один "shipment" ""),
  *     это поддерживает кейс "заказ из 4-х шин, отправляемый двумя посылками".
- *   - Товары в одном отправлении дедуплицируются по (article || productName):
- *     разные типы начислений (выручка/эквайринг/логистика/обратка) на один и тот же товар
- *     дают одинаковое quantity; берём max(quantity), а не сумму.
+ *   - Товары в одном отправлении группируются по (article || productName).
+ *     Количество «продано» (quantitySold) берётся только из строк категории «Выручка» (revenue);
+ *     без выручки в отчёте — 0 (заказ «в работе», см. classify).
+ *     По категориям quantity суммируется внутри категории; возврат — MAX между return-категориями.
  *   - Штрафы без артикула, относящиеся ко всему заказу, — остаются частью totals заказа,
  *     но не превращаются в OrderItem.
  *   - Баллы за скидки — отдельное pointsAmount, в рубли не попадают.
- *   - Классификация (success / partial_return / full_return / incomplete) — в pipeline/classify.ts.
+ *   - Классификация (success / partial_return / full_return / cancelled / incomplete) — в pipeline/classify.ts.
  */
 
 import {
@@ -129,8 +130,13 @@ interface ShipmentBuilder {
   shipmentKey: string;
   chargeTypes: Set<ChargeTypeName>;
   items: Map<string, OrderItem>;
-  /** Возврат по товару: суммарное quantity по строкам returnCategory для данного (shipment, itemKey). */
-  returnedQtyByItem: Map<string, number>;
+  /**
+   * Для каждого товара — суммированные quantity по категории начисления.
+   * Итоговая quantitySold/quantityReturned:
+   *   sold     = только qty из "revenue"
+   *   returned = max qty среди return-категорий (не сумма по разным аспектам одного возврата)
+   */
+  qtyByCatByItem: Map<string, Map<ChargeCategory, number>>;
 }
 
 interface OrderBuilder {
@@ -145,6 +151,10 @@ interface OrderBuilder {
   totals: OrderCategoryTotals;
   totalAmountRub: number;
   pointsAmount: number;
+  /** Сумма единиц по строкам (см. Order) */
+  qtySumLogistics: number;
+  qtySumReturnLogistics: number;
+  qtySumReturnProcessing: number;
 
   shipments: Map<string, ShipmentBuilder>;
 }
@@ -163,6 +173,9 @@ function ensureOrder(map: Map<string, OrderBuilder>, orderKey: string, line: Cha
       totals: emptyTotals(),
       totalAmountRub: 0,
       pointsAmount: 0,
+      qtySumLogistics: 0,
+      qtySumReturnLogistics: 0,
+      qtySumReturnProcessing: 0,
       shipments: new Map(),
     };
     map.set(orderKey, b);
@@ -177,7 +190,7 @@ function ensureShipment(order: OrderBuilder, shipmentKey: string): ShipmentBuild
       shipmentKey,
       chargeTypes: new Set<ChargeTypeName>(),
       items: new Map(),
-      returnedQtyByItem: new Map(),
+      qtyByCatByItem: new Map(),
     };
     order.shipments.set(shipmentKey, s);
   }
@@ -187,36 +200,51 @@ function ensureShipment(order: OrderBuilder, shipmentKey: string): ShipmentBuild
 function recordItem(
   shipment: ShipmentBuilder,
   line: ChargeLine,
-  isReturn: boolean
+  _isReturn: boolean
 ): void {
+  void _isReturn;
   const key = itemKey(line.article, line.productName);
   if (!key) return;
 
-  const existing = shipment.items.get(key);
   const qty = Math.abs(line.quantity);
+
+  // Накапливаем qty по категории (sum внутри одной категории — на случай,
+  // если Ozon разбил Выручку/возврат на несколько строк).
+  if (qty > 0) {
+    let byCat = shipment.qtyByCatByItem.get(key);
+    if (!byCat) {
+      byCat = new Map();
+      shipment.qtyByCatByItem.set(key, byCat);
+    }
+    byCat.set(line.category, (byCat.get(line.category) || 0) + qty);
+  }
+
+  const existing = shipment.items.get(key);
   if (!existing) {
     shipment.items.set(key, {
       shipmentKey: shipment.shipmentKey,
       article: line.article.trim(),
       productName: line.productName.trim(),
       sku: line.sku.trim(),
-      quantitySold: isReturn ? 0 : qty,
-      quantityReturned: 0, // Отдельно ниже
-      sellerPrice: line.sellerPrice,
+      quantitySold: 0, // Итоговый подсчёт — в finalizeOrders (по qtyByCatByItem).
+      quantityReturned: 0,
+      sellerPrice: 0,
       costPerUnit: null,
       cogs: 0,
     });
   } else {
-    if (!isReturn && qty > existing.quantitySold) existing.quantitySold = qty;
     if (!existing.article && line.article) existing.article = line.article.trim();
     if (!existing.productName && line.productName) existing.productName = line.productName.trim();
     if (!existing.sku && line.sku) existing.sku = line.sku.trim();
-    if (line.sellerPrice > existing.sellerPrice) existing.sellerPrice = line.sellerPrice;
   }
+  const it = shipment.items.get(key)!;
 
-  if (isReturn && qty > 0) {
-    const prev = shipment.returnedQtyByItem.get(key) || 0;
-    shipment.returnedQtyByItem.set(key, prev + qty);
+  // Цена продавца — предпочитаем значение из «Выручка»-строки.
+  // Если она ещё не установлена — берём из любой строки, где оно > 0.
+  if (line.sellerPrice > 0) {
+    if (line.category === "revenue" || it.sellerPrice === 0) {
+      it.sellerPrice = line.sellerPrice;
+    }
   }
 }
 
@@ -278,6 +306,17 @@ export function consolidate(charges: ChargeLine[]): ConsolidationBuckets {
       addToTotals(order.totals, line.category, line.totalAmount);
     }
 
+    const lineQty = Math.abs(line.quantity);
+    if (lineQty > 0 && !line.isPoints) {
+      if (line.category === "logistics") {
+        order.qtySumLogistics += lineQty;
+      } else if (line.category === "returnLogistics") {
+        order.qtySumReturnLogistics += lineQty;
+      } else if (line.category === "returnProcessing") {
+        order.qtySumReturnProcessing += lineQty;
+      }
+    }
+
     // Регистрируем товар в отправлении.
     if (line.article || line.productName) {
       recordItem(shipment, line, isReturnCategory(line.category));
@@ -298,10 +337,28 @@ function finalizeOrders(map: Map<string, OrderBuilder>): Order[] {
     for (const sb of b.shipments.values()) {
       const items: OrderItem[] = [];
       for (const [key, it] of sb.items) {
-        const returned = sb.returnedQtyByItem.get(key) || 0;
+        const byCat = sb.qtyByCatByItem.get(key);
+
+        // quantitySold: только «Выручка». Без неё — 0 (не подставляем qty из эквайринга/логистики).
+        let sold = 0;
+        if (byCat) {
+          sold = byCat.get("revenue") || 0;
+        }
+
+        // quantityReturned: max qty среди return-категорий (не сумма).
+        // «Обратная логистика», «Возврат выручки», «Обработка возвратов» — это
+        // разные аспекты одного физического возврата, поэтому берём МАКС.
+        let returned = 0;
+        if (byCat) {
+          for (const [cat, q] of byCat) {
+            if (isReturnCategory(cat) && q > returned) returned = q;
+          }
+        }
+
         items.push({
           ...it,
-          quantityReturned: Math.min(returned, it.quantitySold || returned),
+          quantitySold: sold,
+          quantityReturned: Math.min(returned, sold || returned),
         });
       }
       shipments.push({
@@ -311,17 +368,6 @@ function finalizeOrders(map: Map<string, OrderBuilder>): Order[] {
         chargeTypes: sb.chargeTypes,
       });
     }
-
-    // Флаги по обязательным типам начислений.
-    const hasCat = (cat: ChargeCategory): boolean => {
-      for (const ct of b.chargeTypes) {
-        // Быстрая проверка: есть строки данной категории в любом месте заказа.
-        // Мы уже накопили totals; быстрее проверить через totals != 0? Нет — подписи могут дать 0.
-        // Точно знаем только, что в categoryTotals > 0 или < 0 говорит о наличии.
-      }
-      return false;
-    };
-    void hasCat;
 
     const t = b.totals;
     const hasAcquiring = t.acquiring !== 0 || hasCategoryInChargeTypes(b, "acquiring");
@@ -333,7 +379,8 @@ function finalizeOrders(map: Map<string, OrderBuilder>): Order[] {
       t.returnProcessing !== 0 ||
       t.partialReturn !== 0 ||
       t.returnRevenue !== 0 ||
-      t.returnCommission !== 0;
+      t.returnCommission !== 0 ||
+      hasReturnCategoryInChargeTypes(b);
 
     out.push({
       orderKey: b.orderKey,
@@ -353,6 +400,9 @@ function finalizeOrders(map: Map<string, OrderBuilder>): Order[] {
       hasRevenue,
       hasCommission,
       hasReturnLogisticsOrProcessing: hasReturn,
+      qtySumLogistics: b.qtySumLogistics,
+      qtySumReturnLogistics: b.qtySumReturnLogistics,
+      qtySumReturnProcessing: b.qtySumReturnProcessing,
       totalCost: 0,
       hasCost: false,
     });
@@ -367,6 +417,14 @@ function finalizeOrders(map: Map<string, OrderBuilder>): Order[] {
 function hasCategoryInChargeTypes(b: OrderBuilder, category: ChargeCategory): boolean {
   for (const ct of b.chargeTypes) {
     if (classifyChargeType(ct) === category) return true;
+  }
+  return false;
+}
+
+/** Сумма по return-* в totals могла сойти в 0, но тип «Обратная логистика» в строках есть. */
+function hasReturnCategoryInChargeTypes(b: OrderBuilder): boolean {
+  for (const ct of b.chargeTypes) {
+    if (isReturnCategory(classifyChargeType(ct))) return true;
   }
   return false;
 }

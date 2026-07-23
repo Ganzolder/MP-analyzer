@@ -16,6 +16,10 @@ import {
   AlertTriangle,
   XCircle,
   ChevronRight,
+  Package,
+  CheckCircle2,
+  Clock3,
+  PackageMinus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -156,6 +160,59 @@ export default function AnalysisPage() {
         {/* KPI метрики */}
         <motion.section variants={fadeInUp}>
           <h2 className="text-lg font-semibold mb-4">Ключевые метрики</h2>
+          
+          <div className="mb-6">
+            <h3 className="text-sm font-medium text-muted-foreground mb-3">Заказы по статусам</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              <MetricCard
+                title="Всего заказов"
+                value={summary.totalOrders || 0}
+                format="number"
+                icon={<ShoppingCart className="h-4 w-4" />}
+                delay={0}
+              />
+              <MetricCard
+                title="Завершено"
+                value={summary.completedOrders || 0}
+                format="number"
+                icon={<CheckCircle2 className="h-4 w-4" />}
+                className="border-success/20"
+                delay={0.01}
+              />
+              <MetricCard
+                title="В работе"
+                value={summary.incompleteOrders ?? 0}
+                format="number"
+                icon={<Clock3 className="h-4 w-4" />}
+                className={(summary.incompleteOrders || 0) > 0 ? "border-amber-500/30" : ""}
+                subtitle="неполный набор начислений в отчёте"
+                delay={0.02}
+              />
+              <MetricCard
+                title="Отменено"
+                value={summary.cancelledOrders || 0}
+                format="number"
+                icon={<XCircle className="h-4 w-4" />}
+                delay={0.03}
+              />
+              <MetricCard
+                title="Возвраты"
+                value={summary.returnedOrders || 0}
+                format="number"
+                icon={<RotateCcw className="h-4 w-4" />}
+                subtitle="полный возврат"
+                delay={0.04}
+              />
+              <MetricCard
+                title="Частичные возвраты"
+                value={summary.partialReturns || 0}
+                format="number"
+                icon={<PackageMinus className="h-4 w-4" />}
+                delay={0.05}
+              />
+            </div>
+          </div>
+          
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <MetricCard
               title="Валовая по цене продавца"
@@ -164,6 +221,14 @@ export default function AnalysisPage() {
               icon={<DollarSign className="h-4 w-4" />}
               subtitle="по доставленным единицам (без возвратов)"
               delay={0}
+            />
+            <MetricCard
+              title="Проданных единиц"
+              value={summary.soldUnits ?? 0}
+              format="number"
+              icon={<Package className="h-4 w-4" />}
+              subtitle="доставлено по позициям, за вычетом возвратов"
+              delay={0.02}
             />
             <MetricCard
               title="Валовая выручка"
@@ -186,25 +251,6 @@ export default function AnalysisPage() {
               subtitle="Валовая по цене продавца − Удержания Ozon"
               className={(summary.netPayout || 0) >= 0 ? "border-success/30" : "border-destructive/30"}
               delay={0.1}
-            />
-            <MetricCard
-              title="Заказов"
-              value={summary.totalOrders || 0}
-              icon={<ShoppingCart className="h-4 w-4" />}
-              delay={0.15}
-            />
-            <MetricCard
-              title="Неполные заказы"
-              value={(summary as any).incompleteOrders || 0}
-              icon={<AlertTriangle className="h-4 w-4" />}
-              delay={0.16}
-              className={((summary as any).incompleteOrders || 0) > 0 ? "border-warning/30" : ""}
-            />
-            <MetricCard
-              title="Отменено"
-              value={(summary as any).cancelledOrders || 0}
-              icon={<XCircle className="h-4 w-4" />}
-              delay={0.17}
             />
             <MetricCard
               title="% удержаний"
