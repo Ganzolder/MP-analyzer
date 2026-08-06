@@ -343,6 +343,32 @@ async function insertProductAggregates(
 //  Read
 // ─────────────────────────────────────────────────────────────
 
+/** PostgREST (Supabase) отдаёт не более 1000 строк за один запрос. */
+const SUPABASE_PAGE_SIZE = 1000;
+
+async function selectAllByImportId(
+  supabase: ReturnType<typeof getSupabaseServerClient>,
+  table: string,
+  importId: string
+): Promise<any[]> {
+  const rows: any[] = [];
+  let offset = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("*")
+      .eq("import_id", importId)
+      .order("id", { ascending: true })
+      .range(offset, offset + SUPABASE_PAGE_SIZE - 1);
+    if (error) throw new Error(`loadImport select ${table}: ${error.message}`);
+    const batch = data ?? [];
+    rows.push(...batch);
+    if (batch.length < SUPABASE_PAGE_SIZE) break;
+    offset += SUPABASE_PAGE_SIZE;
+  }
+  return rows;
+}
+
 export async function listImports(iaoUserId: string): Promise<ImportListEntry[]> {
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase
@@ -376,25 +402,28 @@ export async function loadImport(iaoUserId: string, importId: string): Promise<F
   if (error) throw new Error(`loadImport: ${error.message}`);
   if (!imp) return null;
 
-  const [ordersRes, shipmentsRes, itemsRes, chargesRes, nonOrderRes, subsRes, productsRes] =
-    await Promise.all([
-      supabase.from("mp_orders").select("*").eq("import_id", importId),
-      supabase.from("mp_shipments").select("*").eq("import_id", importId),
-      supabase.from("mp_order_items").select("*").eq("import_id", importId),
-      supabase.from("mp_order_charges").select("*").eq("import_id", importId),
-      supabase.from("mp_non_order_charges").select("*").eq("import_id", importId),
-      supabase.from("mp_subscriptions").select("*").eq("import_id", importId),
-      supabase.from("mp_products_agg").select("*").eq("import_id", importId),
-    ]);
+  const [
+    ordersRows,
+    shipmentsRows,
+    itemsRows,
+    chargesRows,
+    nonOrderRows,
+    subsRows,
+    productsRows,
+  ] = await Promise.all([
+    selectAllByImportId(supabase, "mp_orders", importId),
+    selectAllByImportId(supabase, "mp_shipments", importId),
+    selectAllByImportId(supabase, "mp_order_items", importId),
+    selectAllByImportId(supabase, "mp_order_charges", importId),
+    selectAllByImportId(supabase, "mp_non_order_charges", importId),
+    selectAllByImportId(supabase, "mp_subscriptions", importId),
+    selectAllByImportId(supabase, "mp_products_agg", importId),
+  ]);
 
-  for (const r of [ordersRes, shipmentsRes, itemsRes, chargesRes, nonOrderRes, subsRes, productsRes]) {
-    if (r.error) throw new Error(`loadImport select: ${r.error.message}`);
-  }
+  const shipmentsByOrder = groupBy(shipmentsRows, (r: any) => r.order_id as string);
+  const itemsByShipment = groupBy(itemsRows, (r: any) => r.shipment_id as string);
 
-  const shipmentsByOrder = groupBy(shipmentsRes.data ?? [], (r: any) => r.order_id as string);
-  const itemsByShipment = groupBy(itemsRes.data ?? [], (r: any) => r.shipment_id as string);
-
-  const orders: Order[] = (ordersRes.data ?? []).map((row: any) => {
+  const orders: Order[] = ordersRows.map((row: any) => {
     const shipments: Shipment[] = (shipmentsByOrder.get(row.id) ?? []).map((s: any) => ({
       shipmentKey: s.shipment_key ?? "",
       status: s.status,
@@ -438,7 +467,7 @@ export async function loadImport(iaoUserId: string, importId: string): Promise<F
     };
   });
 
-  const charges: ChargeLine[] = (chargesRes.data ?? []).map((c: any) => ({
+  const charges: ChargeLine[] = chargesRows.map((c: any) => ({
     sourceFile: c.source_file ?? "",
     sourceRow: c.source_row ?? 0,
     chargeId: c.charge_id ?? "",
@@ -463,7 +492,7 @@ export async function loadImport(iaoUserId: string, importId: string): Promise<F
     isPoints: !!c.is_points,
   }));
 
-  const nonOrderCharges: NonOrderCharge[] = (nonOrderRes.data ?? []).map((c: any) => ({
+  const nonOrderCharges: NonOrderCharge[] = nonOrderRows.map((c: any) => ({
     chargeId: c.charge_id ?? "",
     chargeDate: c.charge_date ? new Date(c.charge_date) : new Date(0),
     serviceGroup: c.service_group ?? "",
@@ -474,7 +503,7 @@ export async function loadImport(iaoUserId: string, importId: string): Promise<F
     sourceFile: c.source_file ?? "",
   }));
 
-  const subscriptions: SubscriptionCharge[] = (subsRes.data ?? []).map((s: any) => ({
+  const subscriptions: SubscriptionCharge[] = subsRows.map((s: any) => ({
     periodLabel: s.period_label ?? "",
     chargeDate: s.charge_date ? new Date(s.charge_date) : new Date(0),
     chargeType: s.charge_type ?? "",
@@ -482,7 +511,7 @@ export async function loadImport(iaoUserId: string, importId: string): Promise<F
     sourceFile: s.source_file ?? "",
   }));
 
-  const productAggregates: ProductAggregate[] = (productsRes.data ?? []).map((p: any) => ({
+  const productAggregates: ProductAggregate[] = productsRows.map((p: any) => ({
     article: p.article ?? "",
     sku: p.sku ?? "",
     productName: p.product_name ?? "",
